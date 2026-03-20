@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,7 +9,10 @@ import (
 	"testing"
 
 	"github.com/nikkofu/nexus-router/internal/canonical"
+	"github.com/nikkofu/nexus-router/internal/config"
 	openaiapi "github.com/nikkofu/nexus-router/internal/httpapi/openai"
+	"github.com/nikkofu/nexus-router/internal/providers/openai"
+	"github.com/nikkofu/nexus-router/internal/streaming"
 )
 
 func TestChatHandlerNormalizesMessagesIntoCanonicalRequest(t *testing.T) {
@@ -66,5 +70,31 @@ func TestUnsupportedCapabilityReturnsOpenAIError(t *testing.T) {
 	}
 	if payload.Error.Message != "vision not allowed" {
 		t.Fatalf("error.message = %q, want %q", payload.Error.Message, "vision not allowed")
+	}
+}
+
+func TestChatStreamingRelaysOpenAIChunks(t *testing.T) {
+	server := newOpenAIStubServer(t, "chat_stream")
+	adapter := openai.NewAdapter(server.Client())
+
+	result, err := adapter.Execute(context.Background(), config.ProviderConfig{
+		BaseURL: server.URL,
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindChatCompletions,
+		PublicModel:  "openai/gpt-4.1",
+		Stream:       true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	if err := streaming.WriteChatCompletionSSE(rec, result.Events); err != nil {
+		t.Fatalf("WriteChatCompletionSSE() error = %v", err)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "chat.completion.chunk") {
+		t.Fatalf("expected chat chunk in body, got %q", body)
 	}
 }

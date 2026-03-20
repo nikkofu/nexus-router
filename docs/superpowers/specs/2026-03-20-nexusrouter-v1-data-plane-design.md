@@ -30,6 +30,7 @@ The following are explicitly out of scope for v1:
 
 - Dashboard, account system, project or organization management
 - Billing, balance deduction, recharge, invoice generation
+- Tenant-facing RPM or token quota products such as 5-hour or daily policy enforcement
 - Distributed quota/rate-limit policy enforcement across instances
 - Redis, PostgreSQL, Kafka, ClickHouse, or any required external dependency
 - Semantic caching
@@ -38,6 +39,7 @@ The following are explicitly out of scope for v1:
 - Arbitrary raw provider passthrough for ungoverned model names
 - Full vendor-native parity for every OpenAI or Anthropic feature
 - Full JSON Schema support for structured outputs
+- Stored response-resource retrieval, deletion, or cancel endpoints beyond request creation
 
 V1 may still expose local safety limits such as maximum request body size, maximum image bytes, and per-process concurrency caps. Those are runtime protection controls, not product quota controls.
 
@@ -133,7 +135,7 @@ Required endpoints:
 - `GET /livez`
 - `GET /readyz`
 
-Recommended read-only admin endpoints:
+Required internal read-only admin endpoints for v1:
 
 - `GET /admin/config`
 - `GET /admin/routes`
@@ -331,6 +333,8 @@ It maps public model patterns to:
 - normalization rules,
 - degradation rules that are explicitly allowed.
 
+The capability registry is owned by code, not arbitrary user configuration. Configuration may enable or disable already-supported public model patterns and bind them to route groups, but configuration must not define new untested compatibility profiles. This keeps the public contract aligned with the conformance suite.
+
 ### 12.2 Capability Decisions Are Explicit
 
 For every managed model family, the registry must define:
@@ -379,6 +383,8 @@ Routing decisions are deterministic given:
 - health state,
 - breaker state,
 - temporary ejection state.
+
+In v1, route groups do not cross provider families. A public pattern under `openai/gpt-*` routes only to OpenAI upstream instances, and a public pattern under `anthropic/claude-*` routes only to Anthropic upstream instances. Strong consistency is an API-contract property, not a promise that a provider-family model name can fail over to a different provider family.
 
 ### 13.2 Health Checks
 
@@ -518,6 +524,25 @@ The contract must define:
 - how tool-call IDs are generated or normalized,
 - how tool result turns are represented in canonical conversation state.
 
+For v1, the supported tool schema subset should align with the structured-output subset where practical:
+
+- top-level `type: object`,
+- explicit `properties`,
+- `required`,
+- `description`,
+- primitive property types,
+- arrays with a single `items` schema,
+- nested objects up to a bounded depth,
+- enums on scalar fields.
+
+The following should be rejected in v1:
+
+- recursive schemas,
+- `oneOf`, `anyOf`, `allOf`, `not`,
+- `patternProperties`,
+- unconstrained additional object shapes,
+- deep polymorphism that cannot be translated deterministically across providers.
+
 Parallel tool calls may be represented in the capability registry but should only be enabled where conformance tests prove stable cross-provider behavior.
 
 ## 18. Structured Outputs Contract
@@ -533,6 +558,25 @@ V1 supports a restricted JSON Schema subset that is:
 - validated locally,
 - translated deterministically,
 - covered by conformance tests against both OpenAI and Anthropic routes.
+
+The minimum supported subset for v1 should be:
+
+- top-level `type: object`,
+- explicit `properties`,
+- `required`,
+- `description`,
+- scalar leaf types,
+- arrays with a single concrete `items` schema,
+- nested objects up to a bounded depth,
+- scalar `enum`.
+
+The following are out of scope and must be rejected:
+
+- recursive refs,
+- `oneOf`, `anyOf`, `allOf`, `not`,
+- `patternProperties`,
+- unbounded `additionalProperties`,
+- schema constructs that require provider-specific interpretation to preserve semantics.
 
 ### 18.3 Rejection Rule
 
@@ -590,6 +634,8 @@ This means:
 - `health` and `breaker` decide runtime eligibility.
 
 This avoids mixing public contract decisions with operational endpoint wiring.
+
+Configuration also must not invent new capability semantics. It can only select from capability profiles compiled into the binary and validated by tests.
 
 ### 20.4 Client Key Policy
 

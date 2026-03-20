@@ -11,6 +11,7 @@ import (
 type Service struct {
 	server  *http.Server
 	handler http.Handler
+	tls     config.TLSConfig
 }
 
 func New(cfg config.Config) (*Service, error) {
@@ -30,6 +31,7 @@ func New(cfg config.Config) (*Service, error) {
 	return &Service{
 		server:  server,
 		handler: handler,
+		tls:     cfg.Server.TLS,
 	}, nil
 }
 

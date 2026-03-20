@@ -3,6 +3,9 @@ server:
   admin_listen_addr: 127.0.0.1:9090
   tls:
     mode: disabled
+    # For direct HTTPS mode, switch mode to "file" and set cert_file/key_file.
+    # cert_file: /path/to/server.crt
+    # key_file: /path/to/server.key
 
 auth:
   client_keys:

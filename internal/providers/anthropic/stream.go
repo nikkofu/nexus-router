@@ -9,6 +9,23 @@ import (
 	"github.com/nikkofu/nexus-router/internal/canonical"
 )
 
+type StreamDecodeError struct {
+	Err             error
+	OutputCommitted bool
+}
+
+func (e *StreamDecodeError) Error() string {
+	if e.Err == nil {
+		return "anthropic stream decode error"
+	}
+
+	return e.Err.Error()
+}
+
+func (e *StreamDecodeError) Unwrap() error {
+	return e.Err
+}
+
 func DecodeStream(kind canonical.EndpointKind, r io.Reader) ([]canonical.Event, error) {
 	scanner := bufio.NewScanner(r)
 	events := make([]canonical.Event, 0, 8)
@@ -33,7 +50,7 @@ func DecodeStream(kind canonical.EndpointKind, r io.Reader) ([]canonical.Event, 
 					} `json:"content_block"`
 				}
 				if err := json.Unmarshal([]byte(payload), &start); err != nil {
-					return nil, err
+					return nil, &StreamDecodeError{Err: err, OutputCommitted: len(events) > 0}
 				}
 				if start.ContentBlock.Type == "tool_use" {
 					currentToolName = start.ContentBlock.Name
@@ -54,7 +71,7 @@ func DecodeStream(kind canonical.EndpointKind, r io.Reader) ([]canonical.Event, 
 					} `json:"delta"`
 				}
 				if err := json.Unmarshal([]byte(payload), &delta); err != nil {
-					return nil, err
+					return nil, &StreamDecodeError{Err: err, OutputCommitted: len(events) > 0}
 				}
 
 				if delta.Delta.PartialJSON != "" {
@@ -91,7 +108,7 @@ func DecodeStream(kind canonical.EndpointKind, r io.Reader) ([]canonical.Event, 
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, &StreamDecodeError{Err: err, OutputCommitted: len(events) > 0}
 	}
 
 	return events, nil

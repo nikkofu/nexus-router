@@ -3,6 +3,7 @@ package integration
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -30,7 +31,7 @@ func newAnthropicStubServer(t *testing.T, scenario string) (*httptest.Server, *a
 	t.Helper()
 
 	capture := &anthropicCapture{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		payload, _ := io.ReadAll(r.Body)
 		capture.setBody(string(payload))
 
@@ -48,7 +49,16 @@ func newAnthropicStubServer(t *testing.T, scenario string) (*httptest.Server, *a
 		default:
 			http.Error(w, "unknown scenario", http.StatusInternalServerError)
 		}
-	}))
+	})
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	server := &httptest.Server{
+		Listener: listener,
+		Config:   &http.Server{Handler: handler},
+	}
+	server.Start()
 
 	return server, capture
 }

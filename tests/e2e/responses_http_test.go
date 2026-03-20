@@ -1,0 +1,51 @@
+package e2e
+
+import "testing"
+
+func TestResponsesHTTPStreamingOpenAI(t *testing.T) {
+	env := startHTTPTestEnv(t, "openai_responses")
+	defer env.Close()
+
+	resp := postJSON(t, env.Client, env.BaseURL+"/v1/responses", env.Token, responsesTextRequest("openai/gpt-4.1", true))
+	assertStatus(t, resp, 200)
+	assertHeaderContains(t, resp, "Content-Type", "text/event-stream")
+
+	body := readBody(t, resp)
+	assertBodyContains(t, body, "response.output_text.delta", "response.completed")
+}
+
+func TestResponsesHTTPNonStreamingOpenAI(t *testing.T) {
+	env := startHTTPTestEnv(t, "openai_responses")
+	defer env.Close()
+
+	resp := postJSON(t, env.Client, env.BaseURL+"/v1/responses", env.Token, responsesTextRequest("openai/gpt-4.1", false))
+	assertStatus(t, resp, 200)
+	assertHeaderContains(t, resp, "Content-Type", "application/json")
+
+	body := readBody(t, resp)
+	assertBodyContains(t, body, "\"object\":\"response\"", "\"text\":\"hello\"")
+}
+
+func TestResponsesHTTPStreamingAnthropic(t *testing.T) {
+	env := startHTTPTestEnv(t, "anthropic_text")
+	defer env.Close()
+
+	resp := postJSON(t, env.Client, env.BaseURL+"/v1/responses", env.Token, responsesTextRequest("anthropic/claude-sonnet-4-5", true))
+	assertStatus(t, resp, 200)
+	assertHeaderContains(t, resp, "Content-Type", "text/event-stream")
+
+	body := readBody(t, resp)
+	assertBodyContains(t, body, "response.output_text.delta", "response.completed")
+}
+
+func TestResponsesHTTPNonStreamingAnthropic(t *testing.T) {
+	env := startHTTPTestEnv(t, "anthropic_text")
+	defer env.Close()
+
+	resp := postJSON(t, env.Client, env.BaseURL+"/v1/responses", env.Token, responsesTextRequest("anthropic/claude-sonnet-4-5", false))
+	assertStatus(t, resp, 200)
+	assertHeaderContains(t, resp, "Content-Type", "application/json")
+
+	body := readBody(t, resp)
+	assertBodyContains(t, body, "\"object\":\"response\"", "\"text\":\"hello\"")
+}

@@ -32,6 +32,12 @@ func ValidateRequest(registry Registry, policy auth.ClientPolicy, req canonical.
 	if !ok {
 		return fmt.Errorf("unsupported managed model family %q", req.PublicModel)
 	}
+	if len(policy.AllowedModelPatterns) > 0 && !matchesAnyPattern(req.PublicModel, policy.AllowedModelPatterns) {
+		return errors.New("requested model is not allowed for this client policy")
+	}
+	if req.Stream && !policy.AllowStreaming {
+		return errors.New("streaming is not allowed for this client policy")
+	}
 
 	if requiresVision(req) {
 		if !policy.AllowVision {
@@ -99,4 +105,14 @@ func matchesPattern(value, pattern string) bool {
 	}
 
 	return value == pattern
+}
+
+func matchesAnyPattern(value string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if matchesPattern(value, pattern) {
+			return true
+		}
+	}
+
+	return false
 }

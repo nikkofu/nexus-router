@@ -1,6 +1,10 @@
 package openai
 
-import "github.com/nikkofu/nexus-router/internal/canonical"
+import (
+	"strings"
+
+	"github.com/nikkofu/nexus-router/internal/canonical"
+)
 
 type FinalResponse struct {
 	ID     string                `json:"id"`
@@ -16,7 +20,7 @@ type FinalResponseOutput struct {
 }
 
 func FinalizeResponse(events []canonical.Event, model string) FinalResponse {
-	text, _ := aggregateFinalText(events)
+	text := aggregateResponseText(events)
 
 	return FinalResponse{
 		ID:     newGeneratedID("resp_"),
@@ -30,4 +34,23 @@ func FinalizeResponse(events []canonical.Event, model string) FinalResponse {
 			},
 		},
 	}
+}
+
+func aggregateResponseText(events []canonical.Event) string {
+	var builder strings.Builder
+
+	for _, event := range events {
+		if event.Type != canonical.EventContentDelta {
+			continue
+		}
+		if text, ok := event.Data["text"].(string); ok {
+			builder.WriteString(text)
+			continue
+		}
+		if delta, ok := event.Data["delta"].(string); ok {
+			builder.WriteString(delta)
+		}
+	}
+
+	return builder.String()
 }

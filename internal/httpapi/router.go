@@ -8,15 +8,14 @@ import (
 	"github.com/nikkofu/nexus-router/internal/httpapi/handlers"
 )
 
-func NewRouter(cfg config.Config) http.Handler {
+func NewRouter(cfg config.Config, resolver auth.Resolver, exec handlers.ExecuteService) http.Handler {
 	mux := http.NewServeMux()
-	resolver := auth.NewResolver(cfg.Auth.ClientKeys)
 
 	mux.Handle("/livez", handlers.Livez())
 	mux.Handle("/readyz", handlers.Readyz(cfg))
 	mux.Handle("/admin/routes", handlers.AdminRoutes(cfg))
-	mux.Handle("/v1/chat/completions", RequireBearer(resolver, handlers.NotImplemented()))
-	mux.Handle("/v1/responses", RequireBearer(resolver, handlers.NotImplemented()))
+	mux.Handle("/v1/chat/completions", RequireBearer(resolver, handlers.ChatCompletions(exec, ClientPolicyFromContext)))
+	mux.Handle("/v1/responses", RequireBearer(resolver, handlers.Responses(exec, ClientPolicyFromContext)))
 
 	return mux
 }

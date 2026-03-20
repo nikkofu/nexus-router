@@ -1,12 +1,18 @@
 package e2e
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/nikkofu/nexus-router/internal/app"
 	"github.com/nikkofu/nexus-router/internal/auth"
 	"github.com/nikkofu/nexus-router/internal/config"
 )
@@ -32,7 +38,7 @@ func newProviderDispatchStubServer(t *testing.T) (*httptest.Server, *requestCapt
 	t.Helper()
 
 	capture := &requestCapture{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capture.setPath(r.URL.Path)
 
 		switch r.URL.Path {
@@ -47,11 +53,455 @@ func newProviderDispatchStubServer(t *testing.T) (*httptest.Server, *requestCapt
 		default:
 			http.Error(w, "unknown path", http.StatusNotFound)
 		}
-	}))
+	})
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	server := &httptest.Server{
+		Listener: listener,
+		Config:   &http.Server{Handler: handler},
+	}
+	server.Start()
 
 	return server, capture
 }
 
 func newTestResolver(keys ...config.ClientKeyConfig) auth.Resolver {
 	return auth.NewResolver(keys)
+}
+
+type providerCapture struct {
+	mu   sync.RWMutex
+	hits int
+	path string
+	body string
+}
+
+func (c *providerCapture) record(r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.hits++
+	c.path = r.URL.Path
+	c.body = string(body)
+}
+
+func (c *providerCapture) Hits() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.hits
+}
+
+func (c *providerCapture) Path() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.path
+}
+
+func (c *providerCapture) Body() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.body
+}
+
+type httpTestEnv struct {
+	BaseURL string
+	Client  *http.Client
+	Token   string
+	Primary *providerCapture
+	Backup  *providerCapture
+	closeFn func()
+}
+
+func (e httpTestEnv) Close() {
+	if e.closeFn != nil {
+		e.closeFn()
+	}
+}
+
+func startHTTPTestEnv(t *testing.T, scenario string) httpTestEnv {
+	t.Helper()
+
+	const token = "sk-nx-local-dev"
+
+	var (
+		publicModel string
+		providers   []config.ProviderConfig
+		routeGroup  config.RouteGroupConfig
+		primarySrv  *httptest.Server
+		backupSrv   *httptest.Server
+		primaryCap  *providerCapture
+		backupCap   *providerCapture
+	)
+
+	switch scenario {
+	case "openai_text":
+		publicModel = "openai/gpt-4.1"
+		primarySrv, primaryCap = newHTTPProviderStub(t, "openai_text")
+		providers = []config.ProviderConfig{{
+			Name:     "openai-main",
+			Provider: "openai",
+			BaseURL:  primarySrv.URL,
+		}}
+		routeGroup = config.RouteGroupConfig{
+			Name:    "openai-family",
+			Primary: "openai-main",
+		}
+	case "openai_responses":
+		publicModel = "openai/gpt-4.1"
+		primarySrv, primaryCap = newHTTPProviderStub(t, "openai_responses")
+		providers = []config.ProviderConfig{{
+			Name:     "openai-main",
+			Provider: "openai",
+			BaseURL:  primarySrv.URL,
+		}}
+		routeGroup = config.RouteGroupConfig{
+			Name:    "openai-family",
+			Primary: "openai-main",
+		}
+	case "anthropic_text":
+		publicModel = "anthropic/claude-sonnet-4-5"
+		primarySrv, primaryCap = newHTTPProviderStub(t, "anthropic_text")
+		providers = []config.ProviderConfig{{
+			Name:     "anthropic-main",
+			Provider: "anthropic",
+			BaseURL:  primarySrv.URL,
+		}}
+		routeGroup = config.RouteGroupConfig{
+			Name:    "anthropic-family",
+			Primary: "anthropic-main",
+		}
+	case "primary_429_backup_success":
+		publicModel = "openai/gpt-4.1"
+		primarySrv, primaryCap = newHTTPProviderStub(t, "rate_limit")
+		backupSrv, backupCap = newHTTPProviderStub(t, "openai_text")
+		providers = []config.ProviderConfig{
+			{
+				Name:     "openai-main",
+				Provider: "openai",
+				BaseURL:  primarySrv.URL,
+			},
+			{
+				Name:     "openai-backup",
+				Provider: "openai",
+				BaseURL:  backupSrv.URL,
+			},
+		}
+		routeGroup = config.RouteGroupConfig{
+			Name:      "openai-family",
+			Primary:   "openai-main",
+			Fallbacks: []string{"openai-backup"},
+		}
+	case "partial_stream_interrupt_after_output":
+		publicModel = "openai/gpt-4.1"
+		primarySrv, primaryCap = newHTTPProviderStub(t, "partial_stream_interrupt_after_output")
+		backupSrv, backupCap = newHTTPProviderStub(t, "openai_text")
+		providers = []config.ProviderConfig{
+			{
+				Name:     "openai-main",
+				Provider: "openai",
+				BaseURL:  primarySrv.URL,
+			},
+			{
+				Name:     "openai-backup",
+				Provider: "openai",
+				BaseURL:  backupSrv.URL,
+			},
+		}
+		routeGroup = config.RouteGroupConfig{
+			Name:      "openai-family",
+			Primary:   "openai-main",
+			Fallbacks: []string{"openai-backup"},
+		}
+	default:
+		t.Fatalf("unknown HTTP test scenario %q", scenario)
+	}
+
+	cfg := config.Config{
+		Server: config.ServerConfig{
+			ListenAddr: "127.0.0.1:0",
+		},
+		Auth: config.AuthConfig{
+			ClientKeys: []config.ClientKeyConfig{
+				{
+					ID:                   "local-dev",
+					Secret:               token,
+					Active:               true,
+					AllowedModelPatterns: []string{publicModel},
+					AllowStreaming:       true,
+					AllowTools:           true,
+					AllowVision:          true,
+					AllowStructured:      true,
+				},
+			},
+		},
+		Models: []config.ModelConfig{
+			{
+				Pattern:    publicModel,
+				RouteGroup: routeGroup.Name,
+			},
+		},
+		Providers: providers,
+		Routing: config.RoutingConfig{
+			RouteGroups: []config.RouteGroupConfig{routeGroup},
+		},
+	}
+
+	svc, err := app.New(cfg)
+	if err != nil {
+		t.Fatalf("app.New() error = %v", err)
+	}
+
+	publicSrv := newHTTPServer(t, svc.Handler())
+
+	return httpTestEnv{
+		BaseURL: publicSrv.URL,
+		Client:  publicSrv.Client(),
+		Token:   token,
+		Primary: primaryCap,
+		Backup:  backupCap,
+		closeFn: func() {
+			publicSrv.Close()
+			if primarySrv != nil {
+				primarySrv.Close()
+			}
+			if backupSrv != nil {
+				backupSrv.Close()
+			}
+		},
+	}
+}
+
+func newHTTPProviderStub(t *testing.T, scenario string) (*httptest.Server, *providerCapture) {
+	t.Helper()
+
+	capture := &providerCapture{}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capture.record(r)
+
+		switch scenario {
+		case "openai_text":
+			if r.URL.Path != "/v1/chat/completions" {
+				http.Error(w, "unexpected path", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n")
+			_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		case "openai_responses":
+			if r.URL.Path != "/v1/responses" {
+				http.Error(w, "unexpected path", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hel\"}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\"}\n\n")
+		case "anthropic_text":
+			if r.URL.Path != "/v1/messages" {
+				http.Error(w, "unexpected path", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"hel\"}}\n\n")
+			_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"lo\"}}\n\n")
+			_, _ = fmt.Fprint(w, "event: message_stop\ndata: {}\n\n")
+		case "rate_limit":
+			http.Error(w, `{"error":{"message":"rate limit"}}`, http.StatusTooManyRequests)
+		case "partial_stream_interrupt_after_output":
+			if r.URL.Path != "/v1/chat/completions" {
+				http.Error(w, "unexpected path", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			_, _ = fmt.Fprint(w, "data: {\"broken\":\n\n")
+		default:
+			http.Error(w, "unknown scenario", http.StatusInternalServerError)
+		}
+	})
+
+	return newHTTPServer(t, handler), capture
+}
+
+func newHTTPServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+
+	server := &httptest.Server{
+		Listener: listener,
+		Config:   &http.Server{Handler: handler},
+	}
+	server.Start()
+	return server
+}
+
+func postJSON(t *testing.T, client *http.Client, url, token string, payload any) *http.Response {
+	t.Helper()
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("http.NewRequest() error = %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("client.Do() error = %v", err)
+	}
+
+	return resp
+}
+
+func readBody(t *testing.T, resp *http.Response) string {
+	t.Helper()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("io.ReadAll() error = %v", err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("resp.Body.Close() error = %v", err)
+	}
+
+	return string(body)
+}
+
+func assertStatus(t *testing.T, resp *http.Response, want int) {
+	t.Helper()
+	if resp.StatusCode != want {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, want)
+	}
+}
+
+func assertHeaderContains(t *testing.T, resp *http.Response, header, want string) {
+	t.Helper()
+	if got := resp.Header.Get(header); !strings.Contains(got, want) {
+		t.Fatalf("%s = %q, want to contain %q", header, got, want)
+	}
+}
+
+func assertBodyContains(t *testing.T, body string, parts ...string) {
+	t.Helper()
+	for _, part := range parts {
+		if !strings.Contains(body, part) {
+			t.Fatalf("body = %q, want to contain %q", body, part)
+		}
+	}
+}
+
+func assertJSONErrorType(t *testing.T, body, wantType string) {
+	t.Helper()
+
+	var payload struct {
+		Error struct {
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if payload.Error.Type != wantType {
+		t.Fatalf("error.type = %q, want %q", payload.Error.Type, wantType)
+	}
+}
+
+func chatTextRequest(model string, stream bool) map[string]any {
+	return map[string]any{
+		"model":  model,
+		"stream": stream,
+		"messages": []map[string]any{
+			{
+				"role":    "user",
+				"content": "hello",
+			},
+		},
+	}
+}
+
+func responsesTextRequest(model string, stream bool) map[string]any {
+	return map[string]any{
+		"model":  model,
+		"stream": stream,
+		"input": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{
+						"type": "input_text",
+						"text": "hello",
+					},
+				},
+			},
+		},
+	}
+}
+
+func chatToolsRequest() map[string]any {
+	req := chatTextRequest("openai/gpt-4.1", false)
+	req["tools"] = []map[string]any{
+		{
+			"type": "function",
+			"function": map[string]any{
+				"name": "lookup_weather",
+				"parameters": map[string]any{
+					"type": "object",
+				},
+			},
+		},
+	}
+	return req
+}
+
+func responsesVisionRequest() map[string]any {
+	return map[string]any{
+		"model":  "openai/gpt-4.1",
+		"stream": false,
+		"input": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{
+						"type":      "input_image",
+						"image_url": "https://example.com/cat.png",
+					},
+				},
+			},
+		},
+	}
+}
+
+func responsesStructuredOutputRequest() map[string]any {
+	req := responsesTextRequest("openai/gpt-4.1", false)
+	req["text"] = map[string]any{
+		"format": map[string]any{
+			"type": "json_schema",
+			"name": "answer",
+			"schema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"answer": map[string]any{
+						"type": "string",
+					},
+				},
+			},
+		},
+	}
+	return req
 }

@@ -3,6 +3,7 @@ package anthropic
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,7 +68,20 @@ func (a *Adapter) Execute(ctx context.Context, upstream config.ProviderConfig, r
 
 	events, err := DecodeStream(req.EndpointKind, resp.Body)
 	if err != nil {
-		return providers.Result{}, err
+		var streamErr *StreamDecodeError
+		if errors.As(err, &streamErr) {
+			return providers.Result{}, &providers.ExecutionError{
+				Err:             fmt.Errorf("anthropic stream decode failed: %w", streamErr.Err),
+				Retryable:       true,
+				OutputCommitted: streamErr.OutputCommitted,
+			}
+		}
+
+		return providers.Result{}, &providers.ExecutionError{
+			Err:             err,
+			Retryable:       true,
+			OutputCommitted: false,
+		}
 	}
 
 	return providers.Result{Events: events}, nil

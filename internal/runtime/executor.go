@@ -49,6 +49,15 @@ func (e *Executor) Execute(ctx context.Context, upstream string, req canonical.R
 
 	result, err := adapter.Execute(ctx, providerConfig, req)
 	if err != nil {
+		var execErr *providers.ExecutionError
+		if errors.As(err, &execErr) {
+			return providers.Result{}, &providers.ExecutionError{
+				Err:             fmt.Errorf("runtime executor: execute provider %q for upstream %q: %w", providerConfig.Provider, upstream, execErr.Err),
+				Retryable:       execErr.Retryable,
+				OutputCommitted: execErr.OutputCommitted,
+			}
+		}
+
 		return providers.Result{}, &providers.ExecutionError{
 			Err:             fmt.Errorf("runtime executor: execute provider %q for upstream %q: %w", providerConfig.Provider, upstream, err),
 			Retryable:       isRetryableProviderError(err),
@@ -60,6 +69,11 @@ func (e *Executor) Execute(ctx context.Context, upstream string, req canonical.R
 }
 
 func isRetryableProviderError(err error) bool {
+	var execErr *providers.ExecutionError
+	if errors.As(err, &execErr) {
+		return execErr.Retryable
+	}
+
 	var openaiErr *openai.ClassifiedError
 	if errors.As(err, &openaiErr) {
 		return openaiErr.Retryable

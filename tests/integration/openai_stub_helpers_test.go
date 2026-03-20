@@ -2,6 +2,7 @@ package integration
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,7 +11,7 @@ import (
 func newOpenAIStubServer(t *testing.T, scenario string) *httptest.Server {
 	t.Helper()
 
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch scenario {
 		case "chat_stream":
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -27,5 +28,16 @@ func newOpenAIStubServer(t *testing.T, scenario string) *httptest.Server {
 		default:
 			http.Error(w, "unknown scenario", http.StatusInternalServerError)
 		}
-	}))
+	})
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	server := &httptest.Server{
+		Listener: listener,
+		Config:   &http.Server{Handler: handler},
+	}
+	server.Start()
+
+	return server
 }

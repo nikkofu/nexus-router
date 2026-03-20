@@ -3,9 +3,15 @@ package app
 import (
 	"net/http"
 
+	"github.com/nikkofu/nexus-router/internal/auth"
+	"github.com/nikkofu/nexus-router/internal/capabilities"
 	"github.com/nikkofu/nexus-router/internal/config"
+	"github.com/nikkofu/nexus-router/internal/health"
 	"github.com/nikkofu/nexus-router/internal/httpapi"
 	"github.com/nikkofu/nexus-router/internal/observability"
+	routeplanner "github.com/nikkofu/nexus-router/internal/router"
+	"github.com/nikkofu/nexus-router/internal/runtime"
+	"github.com/nikkofu/nexus-router/internal/service"
 )
 
 type Service struct {
@@ -15,7 +21,12 @@ type Service struct {
 }
 
 func New(cfg config.Config) (*Service, error) {
-	handler := httpapi.NewRouter(cfg)
+	resolver := auth.NewResolver(cfg.Auth.ClientKeys)
+	manager := health.NewManager()
+	planner := routeplanner.NewPlanner(cfg, manager)
+	executor := runtime.NewExecutor(runtime.NewRegistry(cfg.Providers), http.DefaultClient)
+	executeService := service.NewExecuteService(capabilities.DefaultRegistry(), &planner, executor)
+	handler := httpapi.NewRouter(cfg, resolver, executeService)
 
 	logger := observability.NewLogger()
 	server := &http.Server{

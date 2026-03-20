@@ -70,6 +70,7 @@ func TestPublicTextServiceRejectsUnsupportedCapabilities(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := svc.Execute(context.Background(), auth.ClientPolicy{
+				AllowStreaming:  true,
 				AllowVision:     true,
 				AllowTools:      true,
 				AllowStructured: true,
@@ -104,6 +105,7 @@ func TestPublicTextServiceExecutesViaOrchestratorAndReturnsAttempts(t *testing.T
 	svc := service.NewExecuteService(capabilities.DefaultRegistry(), planner, executor)
 
 	result, attempts, err := svc.Execute(context.Background(), auth.ClientPolicy{
+		AllowStreaming:  true,
 		AllowVision:     true,
 		AllowTools:      true,
 		AllowStructured: true,
@@ -148,6 +150,7 @@ func TestPublicTextServiceRunsCapabilityValidationBeforeOrchestrator(t *testing.
 	svc := service.NewExecuteService(capabilities.DefaultRegistry(), planner, executor)
 
 	_, _, err := svc.Execute(context.Background(), auth.ClientPolicy{
+		AllowStreaming:  true,
 		AllowVision:     true,
 		AllowTools:      true,
 		AllowStructured: true,

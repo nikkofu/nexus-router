@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 
 	"github.com/nikkofu/nexus-router/internal/auth"
 	"github.com/nikkofu/nexus-router/internal/canonical"
@@ -42,7 +43,16 @@ func (s *ExecuteService) Execute(ctx context.Context, policy auth.ClientPolicy, 
 
 	outcome, err := orchestrator.New(s.planner, s.executor).Run(ctx, req)
 	if err != nil {
-		return providers.Result{}, outcome.Attempts, err
+		var execErr *providers.ExecutionError
+		if errors.As(err, &execErr) {
+			return providers.Result{}, outcome.Attempts, err
+		}
+
+		return providers.Result{}, outcome.Attempts, &providers.ExecutionError{
+			Err:             err,
+			Retryable:       false,
+			OutputCommitted: false,
+		}
 	}
 
 	return outcome.Result, outcome.Attempts, nil

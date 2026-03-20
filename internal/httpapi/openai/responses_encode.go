@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 
 	"github.com/nikkofu/nexus-router/internal/canonical"
@@ -39,10 +40,52 @@ func DecodeResponsesRequest(r io.Reader) (canonical.Request, error) {
 		})
 	}
 
+	tools := make([]canonical.Tool, 0, len(req.Tools))
+	for _, tool := range req.Tools {
+		if tool.Name == "" {
+			continue
+		}
+		tools = append(tools, canonical.Tool{
+			Name:   tool.Name,
+			Schema: tool.Parameters,
+		})
+	}
+
 	return canonical.Request{
 		EndpointKind: canonical.EndpointKindResponses,
 		PublicModel:  req.Model,
 		Conversation: conversation,
-		Stream:       req.Stream,
+		Generation: canonical.Generation{
+			Temperature:     req.Temperature,
+			TopP:            req.TopP,
+			MaxOutputTokens: req.MaxOutputTokens,
+		},
+		Tools:            tools,
+		ResponseContract: decodeResponsesResponseContract(req.Text),
+		Stream:           req.Stream,
+		Metadata:         req.Metadata,
 	}, nil
+}
+
+func decodeResponsesResponseContract(text *ResponsesTextBlock) canonical.ResponseContract {
+	if text == nil || len(text.Format) == 0 {
+		return canonical.ResponseContract{}
+	}
+
+	switch fmt.Sprint(text.Format["type"]) {
+	case "json_object":
+		return canonical.ResponseContract{
+			Kind: canonical.ResponseContractJSONObject,
+		}
+	case "json_schema":
+		contract := canonical.ResponseContract{
+			Kind: canonical.ResponseContractJSONSchema,
+		}
+		if schema, ok := text.Format["schema"].(map[string]any); ok {
+			contract.Schema = schema
+		}
+		return contract
+	default:
+		return canonical.ResponseContract{}
+	}
 }

@@ -1,12 +1,17 @@
 package integration
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/nikkofu/nexus-router/internal/canonical"
 	"github.com/nikkofu/nexus-router/internal/circuitbreaker"
 	"github.com/nikkofu/nexus-router/internal/config"
 	"github.com/nikkofu/nexus-router/internal/health"
+	"github.com/nikkofu/nexus-router/internal/orchestrator"
+	"github.com/nikkofu/nexus-router/internal/providers"
 	"github.com/nikkofu/nexus-router/internal/router"
 )
 
@@ -61,6 +66,86 @@ func TestPlannerReturnsOrderedFallbacks(t *testing.T) {
 	}
 }
 
+func TestFailoverOccursBeforeAnyOutput(t *testing.T) {
+	cfg := failoverConfig()
+	manager := health.NewManager()
+	planner := router.NewPlanner(cfg, manager)
+	executor := &fakeExecutor{
+		results: map[string]fakeResult{
+			"openai-main": {
+				err: &providers.ExecutionError{
+					Err:             errors.New("rate limited"),
+					Retryable:       true,
+					OutputCommitted: false,
+				},
+			},
+			"openai-backup": {
+				result: providers.Result{
+					Events: []canonical.Event{
+						{Type: canonical.EventContentDelta, Data: map[string]any{"text": "hello"}},
+						{Type: canonical.EventMessageStop},
+					},
+				},
+			},
+		},
+	}
+
+	runner := orchestrator.New(planner, executor)
+	outcome, err := runner.Run(context.Background(), canonical.Request{
+		PublicModel: "openai/gpt-4.1",
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if len(outcome.Attempts) != 2 {
+		t.Fatalf("attempts = %d, want 2", len(outcome.Attempts))
+	}
+	if outcome.Attempts[0] != "openai-main" || outcome.Attempts[1] != "openai-backup" {
+		t.Fatalf("unexpected attempts = %#v", outcome.Attempts)
+	}
+}
+
+func TestNoFailoverAfterPartialStream(t *testing.T) {
+	cfg := failoverConfig()
+	manager := health.NewManager()
+	planner := router.NewPlanner(cfg, manager)
+	executor := &fakeExecutor{
+		results: map[string]fakeResult{
+			"openai-main": {
+				err: &providers.ExecutionError{
+					Err:             errors.New("stream interrupted"),
+					Retryable:       true,
+					OutputCommitted: true,
+				},
+			},
+			"openai-backup": {
+				result: providers.Result{
+					Events: []canonical.Event{
+						{Type: canonical.EventContentDelta, Data: map[string]any{"text": "backup"}},
+						{Type: canonical.EventMessageStop},
+					},
+				},
+			},
+		},
+	}
+
+	runner := orchestrator.New(planner, executor)
+	outcome, err := runner.Run(context.Background(), canonical.Request{
+		PublicModel: "openai/gpt-4.1",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if len(outcome.Attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(outcome.Attempts))
+	}
+	if outcome.Attempts[0] != "openai-main" {
+		t.Fatalf("unexpected attempts = %#v", outcome.Attempts)
+	}
+}
+
 func failoverConfig() config.Config {
 	return config.Config{
 		Models: []config.ModelConfig{
@@ -91,4 +176,22 @@ func failoverConfig() config.Config {
 			},
 		},
 	}
+}
+
+type fakeExecutor struct {
+	results map[string]fakeResult
+}
+
+type fakeResult struct {
+	result providers.Result
+	err    error
+}
+
+func (f *fakeExecutor) Execute(_ context.Context, upstream string, _ canonical.Request) (providers.Result, error) {
+	result, ok := f.results[upstream]
+	if !ok {
+		return providers.Result{}, errors.New("unexpected upstream")
+	}
+
+	return result.result, result.err
 }

@@ -9,6 +9,24 @@ import (
 	"github.com/nikkofu/nexus-router/internal/canonical"
 )
 
+var ErrUnsupportedCapability = errors.New("unsupported capability")
+
+func ValidatePublicTextOnly(req canonical.Request) error {
+	if len(req.Tools) > 0 {
+		return fmt.Errorf("%w: tools are not supported on public text endpoints", ErrUnsupportedCapability)
+	}
+
+	if requiresVision(req) {
+		return fmt.Errorf("%w: image content is not supported on public text endpoints", ErrUnsupportedCapability)
+	}
+
+	if req.ResponseContract.Kind == canonical.ResponseContractJSONSchema || req.ResponseContract.Kind == canonical.ResponseContractJSONObject {
+		return fmt.Errorf("%w: structured output contracts are not supported on public text endpoints", ErrUnsupportedCapability)
+	}
+
+	return nil
+}
+
 func ValidateRequest(registry Registry, policy auth.ClientPolicy, req canonical.Request) error {
 	profile, ok := registry.Match(req.PublicModel)
 	if !ok {

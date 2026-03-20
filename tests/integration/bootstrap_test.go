@@ -4,7 +4,9 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,5 +59,29 @@ func TestServiceShutdownWithoutStartReturnsNil(t *testing.T) {
 
 	if err := srv.Shutdown(ctx); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
+	}
+}
+
+func TestLoadConfigRejectsUnknownRouteGroup(t *testing.T) {
+	_, err := config.Load(strings.NewReader(`
+server:
+  listen_addr: 127.0.0.1:8080
+models:
+  - pattern: openai/gpt-*
+    route_group: missing
+`))
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
+func TestLoadConfigAcceptsExample(t *testing.T) {
+	data, err := os.ReadFile("../../configs/nexus-router.example.yaml")
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	if _, err := config.Load(strings.NewReader(string(data))); err != nil {
+		t.Fatalf("Load() error = %v", err)
 	}
 }

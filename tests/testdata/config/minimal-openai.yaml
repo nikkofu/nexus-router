@@ -1,0 +1,32 @@
+server:
+  listen_addr: 127.0.0.1:8080
+  tls:
+    mode: disabled
+
+auth:
+  client_keys:
+    - id: local-openai
+      secret: sk-nx-openai
+      active: true
+      allowed_model_patterns:
+        - openai/gpt-*
+      allow_streaming: true
+      allow_tools: false
+      allow_vision: false
+      allow_structured: false
+
+models:
+  - pattern: openai/gpt-*
+    route_group: openai-family
+
+providers:
+  - name: openai-main
+    provider: openai
+    base_url: https://api.openai.com
+    api_key_env: OPENAI_API_KEY
+
+routing:
+  route_groups:
+    - name: openai-family
+      primary: openai-main
+      fallbacks: []

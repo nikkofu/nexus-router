@@ -1,0 +1,54 @@
+server:
+  listen_addr: 127.0.0.1:8080
+  admin_listen_addr: 127.0.0.1:9090
+  tls:
+    mode: disabled
+
+auth:
+  client_keys:
+    - id: local-dev
+      secret: sk-nx-local-dev
+      active: true
+      allowed_model_patterns:
+        - openai/gpt-*
+        - anthropic/claude-*
+      allow_streaming: true
+      allow_tools: true
+      allow_vision: true
+      allow_structured: true
+
+models:
+  - pattern: openai/gpt-*
+    route_group: openai-family
+  - pattern: anthropic/claude-*
+    route_group: anthropic-family
+
+providers:
+  - name: openai-main
+    provider: openai
+    base_url: https://api.openai.com
+    api_key_env: OPENAI_API_KEY
+  - name: anthropic-main
+    provider: anthropic
+    base_url: https://api.anthropic.com
+    api_key_env: ANTHROPIC_API_KEY
+
+routing:
+  route_groups:
+    - name: openai-family
+      primary: openai-main
+      fallbacks: []
+    - name: anthropic-family
+      primary: anthropic-main
+      fallbacks: []
+
+health:
+  probe_interval: 5s
+  probe_timeout: 1s
+
+breaker:
+  failure_threshold: 3
+  open_interval: 30s
+
+limits:
+  max_request_bytes: 1048576

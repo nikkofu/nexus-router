@@ -9,6 +9,7 @@ import (
 func EncodeRequest(req canonical.Request) ([]byte, error) {
 	system := ""
 	messages := make([]map[string]any, 0, len(req.Conversation))
+	tools := make([]map[string]any, 0, len(req.Tools))
 
 	for _, turn := range req.Conversation {
 		if turn.Role == canonical.RoleSystem {
@@ -47,10 +48,22 @@ func EncodeRequest(req canonical.Request) ([]byte, error) {
 		})
 	}
 
-	return json.Marshal(map[string]any{
+	for _, tool := range req.Tools {
+		tools = append(tools, map[string]any{
+			"name":         tool.Name,
+			"input_schema": tool.Schema,
+		})
+	}
+
+	payload := map[string]any{
 		"model":    req.PublicModel,
 		"system":   system,
 		"stream":   req.Stream,
 		"messages": messages,
-	})
+	}
+	if len(tools) > 0 {
+		payload["tools"] = tools
+	}
+
+	return json.Marshal(payload)
 }

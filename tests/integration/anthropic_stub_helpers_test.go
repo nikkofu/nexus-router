@@ -40,6 +40,11 @@ func newAnthropicStubServer(t *testing.T, scenario string) (*httptest.Server, *a
 			_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"hel\"}}\n\n")
 			_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"lo\"}}\n\n")
 			_, _ = fmt.Fprint(w, "event: message_stop\ndata: {}\n\n")
+		case "tool_use_stream":
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "event: content_block_start\ndata: {\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup_weather\"}}\n\n")
+			_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"partial_json\":\"{\\\"city\\\":\\\"Shanghai\\\"}\"}}\n\n")
+			_, _ = fmt.Fprint(w, "event: message_stop\ndata: {}\n\n")
 		default:
 			http.Error(w, "unknown scenario", http.StatusInternalServerError)
 		}

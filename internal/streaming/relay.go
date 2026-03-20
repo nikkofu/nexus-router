@@ -24,6 +24,29 @@ func WriteChatCompletionSSE(w io.Writer, events []canonical.Event) error {
 			if err := writeDataEvent(w, payload); err != nil {
 				return err
 			}
+		case canonical.EventToolCallStart, canonical.EventToolCallDelta:
+			payload := map[string]any{
+				"object": "chat.completion.chunk",
+				"choices": []map[string]any{
+					{
+						"delta": map[string]any{
+							"tool_calls": []map[string]any{
+								{
+									"id":   event.Data["id"],
+									"type": "function",
+									"function": map[string]any{
+										"name":      event.Data["name"],
+										"arguments": event.Data["arguments"],
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			if err := writeDataEvent(w, payload); err != nil {
+				return err
+			}
 		case canonical.EventMessageStop:
 			if _, err := io.WriteString(w, "data: [DONE]\n\n"); err != nil {
 				return err

@@ -24,6 +24,20 @@ func ValidateRequest(registry Registry, policy auth.ClientPolicy, req canonical.
 		}
 	}
 
+	if len(req.Tools) > 0 {
+		if !policy.AllowTools {
+			return errors.New("tool use is not allowed for this client policy")
+		}
+		if !profile.SupportsTools {
+			return errors.New("tool use is not supported for this model family")
+		}
+		for _, tool := range req.Tools {
+			if err := ValidateSchemaSubset(tool.Schema); err != nil {
+				return fmt.Errorf("tool %q schema invalid: %w", tool.Name, err)
+			}
+		}
+	}
+
 	if req.ResponseContract.Kind == canonical.ResponseContractJSONSchema {
 		if !policy.AllowStructured {
 			return errors.New("structured outputs are not allowed for this client policy")

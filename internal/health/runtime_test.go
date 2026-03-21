@@ -54,6 +54,18 @@ func TestRuntimeSnapshotContractAtStartup(t *testing.T) {
 	if !up.EjectedUntil.IsZero() {
 		t.Fatalf("upstream.ejected_until = %v, want zero time", up.EjectedUntil)
 	}
+	if up.ConsecutiveFailures != 0 {
+		t.Fatalf("upstream.consecutive_failures = %d, want 0", up.ConsecutiveFailures)
+	}
+	if !up.LastProbeAt.IsZero() {
+		t.Fatalf("upstream.last_probe_at = %v, want zero time", up.LastProbeAt)
+	}
+	if up.LastProbeOK {
+		t.Fatal("upstream.last_probe_ok = true, want false")
+	}
+	if up.LastError != "" {
+		t.Fatalf("upstream.last_error = %q, want empty string", up.LastError)
+	}
 }
 
 func TestRuntimeOpensAfterFailureThreshold(t *testing.T) {
@@ -402,6 +414,70 @@ func TestRuntimeWritePathRefreshesOpenToHalfOpenWithoutSnapshotRead(t *testing.T
 	}
 	if up.Eligible {
 		t.Fatal("eligible after first half-open success = true, want false")
+	}
+}
+
+func TestRuntimeIgnoresOlderRequestSuccessAfterNewerRequestFailure(t *testing.T) {
+	base := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	now := base.Add(5 * time.Second)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         1,
+		RecoverySuccessThreshold: 1,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return now },
+	})
+
+	rt.RecordProbeSuccess("openai-main", base)
+	rt.RecordRequestFailure("openai-main", now, true, false, "newer-timeout")
+	rt.RecordRequestSuccess("openai-main", base.Add(1*time.Second))
+
+	up := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if up.State != StateOpen {
+		t.Fatalf("state after older request success = %q, want %q", up.State, StateOpen)
+	}
+	if up.Source != SourceRequest {
+		t.Fatalf("source after older request success = %q, want %q", up.Source, SourceRequest)
+	}
+	if up.ConsecutiveFailures != 1 {
+		t.Fatalf("consecutive_failures after older request success = %d, want 1", up.ConsecutiveFailures)
+	}
+	if up.LastError != "newer-timeout" {
+		t.Fatalf("last_error after older request success = %q, want %q", up.LastError, "newer-timeout")
+	}
+}
+
+func TestRuntimeIgnoresOlderRequestFailureAfterNewerRequestSuccess(t *testing.T) {
+	base := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	now := base.Add(5 * time.Second)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         1,
+		RecoverySuccessThreshold: 1,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return now },
+	})
+
+	rt.RecordProbeSuccess("openai-main", base)
+	rt.RecordRequestSuccess("openai-main", now)
+	rt.RecordRequestFailure("openai-main", base.Add(1*time.Second), true, false, "older-timeout")
+
+	up := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if up.State != StateHealthy {
+		t.Fatalf("state after older request failure = %q, want %q", up.State, StateHealthy)
+	}
+	if up.BreakerState != BreakerStateClosed {
+		t.Fatalf("breaker_state after older request failure = %q, want %q", up.BreakerState, BreakerStateClosed)
+	}
+	if up.ConsecutiveFailures != 0 {
+		t.Fatalf("consecutive_failures after older request failure = %d, want 0", up.ConsecutiveFailures)
+	}
+	if up.LastError != "" {
+		t.Fatalf("last_error after older request failure = %q, want empty string", up.LastError)
 	}
 }
 

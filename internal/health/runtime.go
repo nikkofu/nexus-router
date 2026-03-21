@@ -41,6 +41,7 @@ type upstreamState struct {
 	lastError           string
 	source              Source
 	halfOpenSuccesses   int
+	lastRequestEventAt  time.Time
 }
 
 func NewRuntime(opts RuntimeOptions) *Runtime {
@@ -235,7 +236,7 @@ func (r *Runtime) RecordProbeFailure(upstream string, at time.Time, errSummary s
 	}
 }
 
-func (r *Runtime) RecordRequestSuccess(upstream string, _ time.Time) {
+func (r *Runtime) RecordRequestSuccess(upstream string, at time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -244,6 +245,10 @@ func (r *Runtime) RecordRequestSuccess(upstream string, _ time.Time) {
 		return
 	}
 	r.refreshLocked(state)
+	if at.Before(state.lastRequestEventAt) {
+		return
+	}
+	state.lastRequestEventAt = at
 
 	switch state.state {
 	case StateOpen, StateHalfOpen:
@@ -269,6 +274,10 @@ func (r *Runtime) RecordRequestFailure(upstream string, at time.Time, retryable 
 		return
 	}
 	r.refreshLocked(state)
+	if at.Before(state.lastRequestEventAt) {
+		return
+	}
+	state.lastRequestEventAt = at
 	state.lastError = errSummary
 
 	if !retryable || outputCommitted {

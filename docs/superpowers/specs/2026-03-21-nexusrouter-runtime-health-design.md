@@ -212,6 +212,17 @@ Recommended defaults:
 - `open_interval: 30s`
 - `recovery_success_threshold: 1`
 
+`recovery_success_threshold` defines how many consecutive successful half-open probes are required before an upstream returns to `healthy`.
+
+Examples:
+
+- `1`
+  - the first successful half-open probe restores `healthy`
+- `2`
+  - the upstream stays `half_open` after the first success and only restores `healthy` after the second consecutive successful half-open probe
+
+This threshold applies to probe-based half-open recovery in this slice.
+
 ### 8.3 Per-Upstream Probe Overrides
 
 Each provider entry may define an optional `probe` block:
@@ -223,7 +234,6 @@ providers:
     base_url: https://api.openai.com
     api_key_env: OPENAI_API_KEY
     probe:
-      enabled: true
       method: GET
       path: /v1/models
       expected_statuses: [200]
@@ -235,13 +245,14 @@ providers:
 
 Supported fields:
 
-- `enabled`
 - `method`
 - `path`
 - `headers`
 - `expected_statuses`
 - `interval`
 - `timeout`
+
+This slice does not support disabling probes per upstream. If an upstream exists in configuration, it participates in the runtime health loop.
 
 ### 8.4 Provider-Family Defaults
 
@@ -331,6 +342,8 @@ That choice is intentional because it:
 - avoids using user traffic as a canary
 - aligns recovery with the active health-check model
 
+This is an intentional refinement of the earlier passive failover assumption from the 2026-03-20 design. For this slice, probe-driven half-open recovery is the authoritative rule.
+
 ## 10. Runtime Write Events
 
 The runtime must accept normalized write events from two sources:
@@ -354,7 +367,7 @@ This design keeps the state machine centralized while allowing multiple event pr
 The prober must:
 
 - run independently of the public request path
-- maintain one loop per enabled upstream
+- maintain one loop per configured upstream
 - prevent overlapping probes for the same upstream
 - respect per-upstream effective interval and timeout
 
@@ -465,8 +478,29 @@ Each upstream entry should include:
 
 Where `source` identifies whether the latest state transition was driven primarily by:
 
+- `startup`
 - `probe`
 - `request`
+
+`state` is the human-facing runtime state and uses:
+
+- `unknown`
+- `healthy`
+- `open`
+- `half_open`
+
+`breaker_state` is the narrower breaker-style view and uses:
+
+- `closed`
+- `open`
+- `half_open`
+
+Recommended mapping:
+
+- `state=unknown -> breaker_state=closed`
+- `state=healthy -> breaker_state=closed`
+- `state=open -> breaker_state=open`
+- `state=half_open -> breaker_state=half_open`
 
 ## 14. HTTP Surface Semantics
 
@@ -474,13 +508,13 @@ Where `source` identifies whether the latest state transition was driven primari
 
 `/readyz` answers one question only:
 
-> Can this instance currently serve real traffic with at least one eligible upstream?
+> Can this instance currently serve real traffic for every configured route group that the service is expected to support?
 
 Return `200` only when:
 
 - runtime has started
 - if required, the initial probe sweep has completed
-- at least one upstream is currently eligible
+- for every route group referenced by configured public model patterns, at least one upstream in that group is currently eligible
 
 Otherwise return `503`.
 
@@ -508,6 +542,8 @@ It must not expose:
 The existing `/admin/routes` remains a route summary endpoint.
 
 This slice does not merge route configuration and runtime health into one response.
+
+The route-group-based readiness contract from the 2026-03-20 data-plane design remains in force. This spec refines how eligibility is computed, not what readiness means operationally.
 
 ## 15. File Plan
 

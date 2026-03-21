@@ -48,11 +48,11 @@ routing:
 health:
   probe_interval: 5s
   probe_timeout: 1s
-  require_initial_probe: false
+  require_initial_probe: true
 
 breaker:
   failure_threshold: 3
-  recovery_success_threshold: 2
+  recovery_success_threshold: 1
   open_interval: 30s
 
 limits:

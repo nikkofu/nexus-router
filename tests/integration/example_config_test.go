@@ -21,6 +21,12 @@ func TestExampleConfigBoots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
+	if !cfg.Health.RequireInitialProbe {
+		t.Fatalf("health.require_initial_probe = %v, want %v", cfg.Health.RequireInitialProbe, true)
+	}
+	if cfg.Breaker.RecoverySuccessThreshold != 1 {
+		t.Fatalf("breaker.recovery_success_threshold = %d, want %d", cfg.Breaker.RecoverySuccessThreshold, 1)
+	}
 
 	srv, err := app.New(cfg)
 	if err != nil {

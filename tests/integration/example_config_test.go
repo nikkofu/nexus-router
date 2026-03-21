@@ -21,8 +21,20 @@ func TestExampleConfigBoots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
+	if cfg.Health.ProbeInterval != "5s" {
+		t.Fatalf("health.probe_interval = %q, want %q", cfg.Health.ProbeInterval, "5s")
+	}
+	if cfg.Health.ProbeTimeout != "1s" {
+		t.Fatalf("health.probe_timeout = %q, want %q", cfg.Health.ProbeTimeout, "1s")
+	}
 	if !cfg.Health.RequireInitialProbe {
 		t.Fatalf("health.require_initial_probe = %v, want %v", cfg.Health.RequireInitialProbe, true)
+	}
+	if cfg.Breaker.FailureThreshold != 3 {
+		t.Fatalf("breaker.failure_threshold = %d, want %d", cfg.Breaker.FailureThreshold, 3)
+	}
+	if cfg.Breaker.OpenInterval != "30s" {
+		t.Fatalf("breaker.open_interval = %q, want %q", cfg.Breaker.OpenInterval, "30s")
 	}
 	if cfg.Breaker.RecoverySuccessThreshold != 1 {
 		t.Fatalf("breaker.recovery_success_threshold = %d, want %d", cfg.Breaker.RecoverySuccessThreshold, 1)

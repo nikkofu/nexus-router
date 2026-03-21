@@ -19,6 +19,17 @@ var supportedProbeMethods = map[string]struct{}{
 	http.MethodTrace:   {},
 }
 
+func validatePositiveDuration(field, value string) error {
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return fmt.Errorf("%s %q is invalid duration: %w", field, value, err)
+	}
+	if d <= 0 {
+		return fmt.Errorf("%s %q must be > 0", field, value)
+	}
+	return nil
+}
+
 func Validate(cfg Config) error {
 	if len(cfg.Auth.ClientKeys) == 0 {
 		return errors.New("auth.client_keys must not be empty")
@@ -66,25 +77,30 @@ func Validate(cfg Config) error {
 			}
 		}
 		if provider.Probe.Interval != "" {
-			if _, err := time.ParseDuration(provider.Probe.Interval); err != nil {
-				return fmt.Errorf("providers[].probe.interval %q is invalid duration: %w", provider.Probe.Interval, err)
+			if err := validatePositiveDuration("providers[].probe.interval", provider.Probe.Interval); err != nil {
+				return err
 			}
 		}
 		if provider.Probe.Timeout != "" {
-			if _, err := time.ParseDuration(provider.Probe.Timeout); err != nil {
-				return fmt.Errorf("providers[].probe.timeout %q is invalid duration: %w", provider.Probe.Timeout, err)
+			if err := validatePositiveDuration("providers[].probe.timeout", provider.Probe.Timeout); err != nil {
+				return err
 			}
 		}
 	}
 
 	if cfg.Health.ProbeInterval != "" {
-		if _, err := time.ParseDuration(cfg.Health.ProbeInterval); err != nil {
-			return fmt.Errorf("health.probe_interval %q is invalid duration: %w", cfg.Health.ProbeInterval, err)
+		if err := validatePositiveDuration("health.probe_interval", cfg.Health.ProbeInterval); err != nil {
+			return err
 		}
 	}
 	if cfg.Health.ProbeTimeout != "" {
-		if _, err := time.ParseDuration(cfg.Health.ProbeTimeout); err != nil {
-			return fmt.Errorf("health.probe_timeout %q is invalid duration: %w", cfg.Health.ProbeTimeout, err)
+		if err := validatePositiveDuration("health.probe_timeout", cfg.Health.ProbeTimeout); err != nil {
+			return err
+		}
+	}
+	if cfg.Breaker.OpenInterval != "" {
+		if err := validatePositiveDuration("breaker.open_interval", cfg.Breaker.OpenInterval); err != nil {
+			return err
 		}
 	}
 

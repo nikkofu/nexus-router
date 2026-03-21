@@ -99,6 +99,16 @@ func TestValidateRejectsInvalidHealthDurations(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsInvalidHealthProbeTimeout(t *testing.T) {
+	cfg := validConfig()
+	cfg.Health.ProbeTimeout = "bad-duration"
+
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected validation error for health.probe_timeout")
+	}
+}
+
 func TestValidateRejectsInvalidProviderProbeDurations(t *testing.T) {
 	cfg := validConfig()
 	cfg.Providers[0].Probe.Interval = "bad-duration"
@@ -106,6 +116,91 @@ func TestValidateRejectsInvalidProviderProbeDurations(t *testing.T) {
 	err := Validate(cfg)
 	if err == nil {
 		t.Fatal("expected validation error for providers[].probe.interval")
+	}
+}
+
+func TestValidateRejectsInvalidProviderProbeTimeout(t *testing.T) {
+	cfg := validConfig()
+	cfg.Providers[0].Probe.Timeout = "bad-duration"
+
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected validation error for providers[].probe.timeout")
+	}
+}
+
+func TestValidateRejectsNonPositiveHealthProbeInterval(t *testing.T) {
+	tests := []string{"0s", "-1s"}
+	for _, value := range tests {
+		cfg := validConfig()
+		cfg.Health.ProbeInterval = value
+
+		err := Validate(cfg)
+		if err == nil {
+			t.Fatalf("expected validation error for health.probe_interval=%q", value)
+		}
+	}
+}
+
+func TestValidateRejectsNonPositiveHealthProbeTimeout(t *testing.T) {
+	tests := []string{"0s", "-1s"}
+	for _, value := range tests {
+		cfg := validConfig()
+		cfg.Health.ProbeTimeout = value
+
+		err := Validate(cfg)
+		if err == nil {
+			t.Fatalf("expected validation error for health.probe_timeout=%q", value)
+		}
+	}
+}
+
+func TestValidateRejectsNonPositiveProviderProbeInterval(t *testing.T) {
+	tests := []string{"0s", "-1s"}
+	for _, value := range tests {
+		cfg := validConfig()
+		cfg.Providers[0].Probe.Interval = value
+
+		err := Validate(cfg)
+		if err == nil {
+			t.Fatalf("expected validation error for providers[].probe.interval=%q", value)
+		}
+	}
+}
+
+func TestValidateRejectsNonPositiveProviderProbeTimeout(t *testing.T) {
+	tests := []string{"0s", "-1s"}
+	for _, value := range tests {
+		cfg := validConfig()
+		cfg.Providers[0].Probe.Timeout = value
+
+		err := Validate(cfg)
+		if err == nil {
+			t.Fatalf("expected validation error for providers[].probe.timeout=%q", value)
+		}
+	}
+}
+
+func TestValidateRejectsInvalidBreakerOpenInterval(t *testing.T) {
+	cfg := validConfig()
+	cfg.Breaker.OpenInterval = "bad-duration"
+
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected validation error for breaker.open_interval")
+	}
+}
+
+func TestValidateRejectsNonPositiveBreakerOpenInterval(t *testing.T) {
+	tests := []string{"0s", "-1s"}
+	for _, value := range tests {
+		cfg := validConfig()
+		cfg.Breaker.OpenInterval = value
+
+		err := Validate(cfg)
+		if err == nil {
+			t.Fatalf("expected validation error for breaker.open_interval=%q", value)
+		}
 	}
 }
 

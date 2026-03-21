@@ -229,10 +229,11 @@ routing:
 `
 
 	tests := []struct {
-		name string
-		probe string
-		health string
+		name    string
+		probe   string
+		health  string
 		breaker string
+		wantErr string
 	}{
 		{
 			name: "failure threshold zero",
@@ -240,6 +241,7 @@ routing:
 breaker:
   failure_threshold: 0
 `,
+			wantErr: "breaker.failure_threshold",
 		},
 		{
 			name: "recovery success threshold zero",
@@ -247,6 +249,7 @@ breaker:
 breaker:
   recovery_success_threshold: 0
 `,
+			wantErr: "breaker.recovery_success_threshold",
 		},
 		{
 			name: "health probe interval empty",
@@ -254,6 +257,7 @@ breaker:
 health:
   probe_interval: ""
 `,
+			wantErr: "health.probe_interval",
 		},
 		{
 			name: "breaker open interval empty",
@@ -261,6 +265,7 @@ health:
 breaker:
   open_interval: ""
 `,
+			wantErr: "breaker.open_interval",
 		},
 		{
 			name: "health probe timeout empty",
@@ -268,18 +273,21 @@ breaker:
 health:
   probe_timeout: ""
 `,
+			wantErr: "health.probe_timeout",
 		},
 		{
 			name: "provider probe interval empty",
 			probe: `    probe:
       interval: ""
 `,
+			wantErr: "providers[0].probe.interval",
 		},
 		{
 			name: "provider probe timeout empty",
 			probe: `    probe:
       timeout: ""
 `,
+			wantErr: "providers[0].probe.timeout",
 		},
 		{
 			name: "health probe interval bare key",
@@ -287,12 +295,62 @@ health:
 health:
   probe_interval:
 `,
+			wantErr: "health.probe_interval",
 		},
 		{
 			name: "provider probe timeout null",
 			probe: `    probe:
       timeout: null
 `,
+			wantErr: "providers[0].probe.timeout",
+		},
+		{
+			name: "health require initial probe null",
+			health: `
+health:
+  require_initial_probe: null
+`,
+			wantErr: "health.require_initial_probe",
+		},
+		{
+			name: "health require initial probe bare key",
+			health: `
+health:
+  require_initial_probe:
+`,
+			wantErr: "health.require_initial_probe",
+		},
+		{
+			name: "breaker failure threshold null",
+			breaker: `
+breaker:
+  failure_threshold: null
+`,
+			wantErr: "breaker.failure_threshold",
+		},
+		{
+			name: "breaker failure threshold bare key",
+			breaker: `
+breaker:
+  failure_threshold:
+`,
+			wantErr: "breaker.failure_threshold",
+		},
+		{
+			name: "breaker recovery success threshold null",
+			breaker: `
+breaker:
+  recovery_success_threshold: null
+`,
+			wantErr: "breaker.recovery_success_threshold",
+		},
+		{
+			name: "breaker recovery success threshold bare key",
+			breaker: `
+breaker:
+  recovery_success_threshold:
+`,
+			wantErr: "breaker.recovery_success_threshold",
 		},
 	}
 
@@ -302,6 +360,9 @@ health:
 			_, err := config.Load(strings.NewReader(cfg))
 			if err == nil {
 				t.Fatal("expected Load() error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Load() error = %q, want substring %q", err.Error(), tt.wantErr)
 			}
 		})
 	}

@@ -123,10 +123,19 @@ func validateExplicitRuntimeHealthNullOverrides(data []byte) error {
 	if isNullScalar(mappingValue(health, "probe_timeout")) {
 		return fmt.Errorf("health.probe_timeout must not be null when explicitly set")
 	}
+	if isNullScalar(mappingValue(health, "require_initial_probe")) {
+		return fmt.Errorf("health.require_initial_probe must not be null when explicitly set")
+	}
 
 	breaker := mappingValue(top, "breaker")
+	if isNullScalar(mappingValue(breaker, "failure_threshold")) {
+		return fmt.Errorf("breaker.failure_threshold must not be null when explicitly set")
+	}
 	if isNullScalar(mappingValue(breaker, "open_interval")) {
 		return fmt.Errorf("breaker.open_interval must not be null when explicitly set")
+	}
+	if isNullScalar(mappingValue(breaker, "recovery_success_threshold")) {
+		return fmt.Errorf("breaker.recovery_success_threshold must not be null when explicitly set")
 	}
 
 	providers := mappingValue(top, "providers")

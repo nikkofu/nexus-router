@@ -48,6 +48,16 @@ type ProviderConfig struct {
 	Provider  string `yaml:"provider"`
 	BaseURL   string `yaml:"base_url"`
 	APIKeyEnv string `yaml:"api_key_env"`
+	Probe     ProbeConfig `yaml:"probe"`
+}
+
+type ProbeConfig struct {
+	Method           string            `yaml:"method"`
+	Path             string            `yaml:"path"`
+	Headers          map[string]string `yaml:"headers"`
+	ExpectedStatuses []int             `yaml:"expected_statuses"`
+	Interval         string            `yaml:"interval"`
+	Timeout          string            `yaml:"timeout"`
 }
 
 type RoutingConfig struct {
@@ -61,13 +71,15 @@ type RouteGroupConfig struct {
 }
 
 type HealthConfig struct {
-	ProbeInterval string `yaml:"probe_interval"`
-	ProbeTimeout  string `yaml:"probe_timeout"`
+	ProbeInterval       string `yaml:"probe_interval"`
+	ProbeTimeout        string `yaml:"probe_timeout"`
+	RequireInitialProbe bool   `yaml:"require_initial_probe"`
 }
 
 type BreakerConfig struct {
-	FailureThreshold int    `yaml:"failure_threshold"`
-	OpenInterval     string `yaml:"open_interval"`
+	FailureThreshold         int    `yaml:"failure_threshold"`
+	RecoverySuccessThreshold int    `yaml:"recovery_success_threshold"`
+	OpenInterval             string `yaml:"open_interval"`
 }
 
 type LimitsConfig struct {

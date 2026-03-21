@@ -3,7 +3,21 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"time"
 )
+
+var supportedProbeMethods = map[string]struct{}{
+	http.MethodGet:     {},
+	http.MethodHead:    {},
+	http.MethodPost:    {},
+	http.MethodPut:     {},
+	http.MethodPatch:   {},
+	http.MethodDelete:  {},
+	http.MethodConnect: {},
+	http.MethodOptions: {},
+	http.MethodTrace:   {},
+}
 
 func Validate(cfg Config) error {
 	if len(cfg.Auth.ClientKeys) == 0 {
@@ -37,6 +51,48 @@ func Validate(cfg Config) error {
 		if provider.Name == "" || provider.Provider == "" || provider.BaseURL == "" {
 			return fmt.Errorf("provider entries require name, provider, and base_url: %#v", provider)
 		}
+
+		if provider.Probe.Method != "" {
+			if _, ok := supportedProbeMethods[provider.Probe.Method]; !ok {
+				return fmt.Errorf("providers[].probe.method %q is unsupported", provider.Probe.Method)
+			}
+		}
+		if provider.Probe.Path != "" && provider.Probe.Path[0] != '/' {
+			return fmt.Errorf("providers[].probe.path %q must start with '/'", provider.Probe.Path)
+		}
+		for _, status := range provider.Probe.ExpectedStatuses {
+			if status < 100 || status > 599 {
+				return fmt.Errorf("providers[].probe.expected_statuses contains invalid status %d", status)
+			}
+		}
+		if provider.Probe.Interval != "" {
+			if _, err := time.ParseDuration(provider.Probe.Interval); err != nil {
+				return fmt.Errorf("providers[].probe.interval %q is invalid duration: %w", provider.Probe.Interval, err)
+			}
+		}
+		if provider.Probe.Timeout != "" {
+			if _, err := time.ParseDuration(provider.Probe.Timeout); err != nil {
+				return fmt.Errorf("providers[].probe.timeout %q is invalid duration: %w", provider.Probe.Timeout, err)
+			}
+		}
+	}
+
+	if cfg.Health.ProbeInterval != "" {
+		if _, err := time.ParseDuration(cfg.Health.ProbeInterval); err != nil {
+			return fmt.Errorf("health.probe_interval %q is invalid duration: %w", cfg.Health.ProbeInterval, err)
+		}
+	}
+	if cfg.Health.ProbeTimeout != "" {
+		if _, err := time.ParseDuration(cfg.Health.ProbeTimeout); err != nil {
+			return fmt.Errorf("health.probe_timeout %q is invalid duration: %w", cfg.Health.ProbeTimeout, err)
+		}
+	}
+
+	if cfg.Breaker.FailureThreshold < 1 {
+		return errors.New("breaker.failure_threshold must be >= 1")
+	}
+	if cfg.Breaker.RecoverySuccessThreshold < 1 {
+		return errors.New("breaker.recovery_success_threshold must be >= 1")
 	}
 
 	switch cfg.Server.TLS.Mode {

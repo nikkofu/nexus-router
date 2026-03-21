@@ -81,8 +81,8 @@ func TestRuntimeOpensAfterFailureThreshold(t *testing.T) {
 	})
 
 	rt.RecordProbeFailure("openai-main", now, "timeout")
-	rt.RecordProbeFailure("openai-main", now, "timeout")
-	rt.RecordProbeFailure("openai-main", now, "timeout")
+	rt.RecordProbeFailure("openai-main", now.Add(1*time.Second), "timeout")
+	rt.RecordProbeFailure("openai-main", now.Add(2*time.Second), "timeout")
 
 	up := upstreamByName(t, rt.Snapshot(), "openai-main")
 	if up.State != StateOpen {
@@ -100,7 +100,7 @@ func TestRuntimeOpensAfterFailureThreshold(t *testing.T) {
 	if up.ConsecutiveFailures != 3 {
 		t.Fatalf("consecutive_failures = %d, want 3", up.ConsecutiveFailures)
 	}
-	wantEjectedUntil := now.Add(30 * time.Second)
+	wantEjectedUntil := now.Add(2 * time.Second).Add(30 * time.Second)
 	if !up.EjectedUntil.Equal(wantEjectedUntil) {
 		t.Fatalf("ejected_until = %v, want %v", up.EjectedUntil, wantEjectedUntil)
 	}
@@ -165,7 +165,7 @@ func TestRuntimeHalfOpenRequiresRecoverySuccessThreshold(t *testing.T) {
 		t.Fatalf("ejected_until after 1 half-open success = %v, want zero time", upAfterOne.EjectedUntil)
 	}
 
-	rt.RecordProbeSuccess("openai-main", current)
+	rt.RecordProbeSuccess("openai-main", current.Add(1*time.Second))
 	upAfterTwo := upstreamByName(t, rt.Snapshot(), "openai-main")
 	if upAfterTwo.State != StateHealthy {
 		t.Fatalf("state after 2 half-open successes = %q, want %q", upAfterTwo.State, StateHealthy)
@@ -272,7 +272,7 @@ func TestRuntimeRequestFailuresRespectRetryableAndOutputCommitted(t *testing.T) 
 
 	rt.RecordProbeSuccess("openai-main", now)
 
-	rt.RecordRequestFailure("openai-main", now, false, false, "bad-request")
+	rt.RecordRequestFailure("openai-main", now.Add(1*time.Second), false, false, "bad-request")
 	upAfterNonRetryable := upstreamByName(t, rt.Snapshot(), "openai-main")
 	if upAfterNonRetryable.State != StateHealthy {
 		t.Fatalf("state after non-retryable failure = %q, want %q", upAfterNonRetryable.State, StateHealthy)
@@ -281,7 +281,7 @@ func TestRuntimeRequestFailuresRespectRetryableAndOutputCommitted(t *testing.T) 
 		t.Fatalf("consecutive_failures after non-retryable failure = %d, want 0", upAfterNonRetryable.ConsecutiveFailures)
 	}
 
-	rt.RecordRequestFailure("openai-main", now, true, true, "stream-reset")
+	rt.RecordRequestFailure("openai-main", now.Add(2*time.Second), true, true, "stream-reset")
 	upAfterPostOutput := upstreamByName(t, rt.Snapshot(), "openai-main")
 	if upAfterPostOutput.State != StateHealthy {
 		t.Fatalf("state after post-output retryable failure = %q, want %q", upAfterPostOutput.State, StateHealthy)
@@ -296,8 +296,8 @@ func TestRuntimeRequestFailuresRespectRetryableAndOutputCommitted(t *testing.T) 
 		t.Fatalf("last_error after post-output retryable failure = %q, want %q", upAfterPostOutput.LastError, "stream-reset")
 	}
 
-	rt.RecordRequestFailure("openai-main", now, true, false, "timeout")
-	rt.RecordRequestFailure("openai-main", now, true, false, "timeout")
+	rt.RecordRequestFailure("openai-main", now.Add(3*time.Second), true, false, "timeout")
+	rt.RecordRequestFailure("openai-main", now.Add(4*time.Second), true, false, "timeout")
 
 	up := upstreamByName(t, rt.Snapshot(), "openai-main")
 	if up.State != StateOpen {
@@ -312,8 +312,9 @@ func TestRuntimeRequestFailuresRespectRetryableAndOutputCommitted(t *testing.T) 
 	if up.Eligible {
 		t.Fatal("eligible = true, want false")
 	}
-	if !up.EjectedUntil.Equal(now.Add(30 * time.Second)) {
-		t.Fatalf("ejected_until = %v, want %v", up.EjectedUntil, now.Add(30*time.Second))
+	wantEjectedUntil := now.Add(4 * time.Second).Add(30 * time.Second)
+	if !up.EjectedUntil.Equal(wantEjectedUntil) {
+		t.Fatalf("ejected_until = %v, want %v", up.EjectedUntil, wantEjectedUntil)
 	}
 }
 
@@ -595,6 +596,104 @@ func TestRuntimeStaleProbeFailureAfterCooldownDoesNotActAsHalfOpen(t *testing.T)
 	wantEjectedUntil := openAt.Add(30 * time.Second)
 	if !up.EjectedUntil.Equal(wantEjectedUntil) {
 		t.Fatalf("ejected_until after stale probe failure delivery = %v, want unchanged %v", up.EjectedUntil, wantEjectedUntil)
+	}
+}
+
+func TestRuntimeStaleProbeSuccessAfterReadHalfOpenTransitionIsIgnored(t *testing.T) {
+	current := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         1,
+		RecoverySuccessThreshold: 1,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return current },
+	})
+
+	openAt := current
+	rt.RecordProbeFailure("openai-main", openAt, "timeout")
+
+	// Read-path transition to half_open by wall clock.
+	current = openAt.Add(40 * time.Second)
+	if rt.IsEligible("openai-main") {
+		t.Fatal("IsEligible(openai-main) = true, want false in half_open")
+	}
+
+	// Late event is still inside original open window.
+	rt.RecordProbeSuccess("openai-main", openAt.Add(10*time.Second))
+
+	// Freeze read-time before original boundary so no further read refresh effects.
+	current = openAt.Add(20 * time.Second)
+	up := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if up.State != StateHalfOpen {
+		t.Fatalf("state after stale probe success post-read-transition = %q, want %q", up.State, StateHalfOpen)
+	}
+	if up.Eligible {
+		t.Fatal("eligible after stale probe success post-read-transition = true, want false")
+	}
+}
+
+func TestRuntimeStaleProbeFailureAfterReadHalfOpenTransitionIsIgnored(t *testing.T) {
+	current := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         1,
+		RecoverySuccessThreshold: 1,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return current },
+	})
+
+	openAt := current
+	rt.RecordProbeFailure("openai-main", openAt, "timeout")
+
+	// Read-path transition to half_open by wall clock.
+	current = openAt.Add(40 * time.Second)
+	_ = rt.Snapshot()
+
+	// Late event is still inside original open window.
+	rt.RecordProbeFailure("openai-main", openAt.Add(10*time.Second), "late-timeout")
+
+	// Freeze read-time before original boundary so no further read refresh effects.
+	current = openAt.Add(20 * time.Second)
+	up := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if up.State != StateHalfOpen {
+		t.Fatalf("state after stale probe failure post-read-transition = %q, want %q", up.State, StateHalfOpen)
+	}
+	if up.Source != SourceProbe {
+		t.Fatalf("source after stale probe failure post-read-transition = %q, want %q", up.Source, SourceProbe)
+	}
+}
+
+func TestRuntimeSameTimestampEventsAreDeterministicAndDoNotDoubleCount(t *testing.T) {
+	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         2,
+		RecoverySuccessThreshold: 1,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return now },
+	})
+
+	rt.RecordProbeSuccess("openai-main", now)
+	// Same-timestamp conflicts should be ignored after first applied event.
+	rt.RecordRequestFailure("openai-main", now, true, false, "same-time-failure")
+	rt.RecordRequestSuccess("openai-main", now)
+	rt.RecordRequestFailure("openai-main", now, true, false, "same-time-failure-2")
+
+	up := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if up.State != StateHealthy {
+		t.Fatalf("state after same-timestamp events = %q, want %q", up.State, StateHealthy)
+	}
+	if up.ConsecutiveFailures != 0 {
+		t.Fatalf("consecutive_failures after same-timestamp events = %d, want 0", up.ConsecutiveFailures)
+	}
+	if up.Source != SourceProbe {
+		t.Fatalf("source after same-timestamp events = %q, want %q", up.Source, SourceProbe)
 	}
 }
 

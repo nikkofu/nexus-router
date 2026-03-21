@@ -36,6 +36,7 @@ type upstreamState struct {
 	state               State
 	consecutiveFailures int
 	ejectedUntil        time.Time
+	openWindowUntil     time.Time
 	lastProbeAt         time.Time
 	lastProbeOK         bool
 	lastError           string
@@ -173,11 +174,9 @@ func (r *Runtime) RecordProbeSuccess(upstream string, at time.Time) {
 	if !ok {
 		return
 	}
-	if at.Before(state.lastAppliedEventAt) {
+	if !r.acceptEventLocked(state, at) {
 		return
 	}
-	r.refreshForEventLocked(state, at)
-	state.lastAppliedEventAt = at
 
 	state.lastProbeAt = at
 	state.lastProbeOK = true
@@ -191,6 +190,7 @@ func (r *Runtime) RecordProbeSuccess(upstream string, at time.Time) {
 			state.consecutiveFailures = 0
 			state.halfOpenSuccesses = 0
 			state.ejectedUntil = time.Time{}
+			state.openWindowUntil = time.Time{}
 			state.source = SourceProbe
 		}
 	case StateOpen:
@@ -199,6 +199,7 @@ func (r *Runtime) RecordProbeSuccess(upstream string, at time.Time) {
 		state.consecutiveFailures = 0
 		state.halfOpenSuccesses = 0
 		state.ejectedUntil = time.Time{}
+		state.openWindowUntil = time.Time{}
 		if state.state != StateHealthy {
 			state.state = StateHealthy
 			state.source = SourceProbe
@@ -214,11 +215,9 @@ func (r *Runtime) RecordProbeFailure(upstream string, at time.Time, errSummary s
 	if !ok {
 		return
 	}
-	if at.Before(state.lastAppliedEventAt) {
+	if !r.acceptEventLocked(state, at) {
 		return
 	}
-	r.refreshForEventLocked(state, at)
-	state.lastAppliedEventAt = at
 
 	state.lastProbeAt = at
 	state.lastProbeOK = false
@@ -233,6 +232,7 @@ func (r *Runtime) RecordProbeFailure(upstream string, at time.Time, errSummary s
 		state.source = SourceProbe
 		state.halfOpenSuccesses = 0
 		state.ejectedUntil = at.Add(r.openInterval)
+		state.openWindowUntil = state.ejectedUntil
 		return
 	}
 
@@ -242,6 +242,7 @@ func (r *Runtime) RecordProbeFailure(upstream string, at time.Time, errSummary s
 		state.source = SourceProbe
 		state.halfOpenSuccesses = 0
 		state.ejectedUntil = at.Add(r.openInterval)
+		state.openWindowUntil = state.ejectedUntil
 	}
 }
 
@@ -253,11 +254,9 @@ func (r *Runtime) RecordRequestSuccess(upstream string, at time.Time) {
 	if !ok {
 		return
 	}
-	if at.Before(state.lastAppliedEventAt) {
+	if !r.acceptEventLocked(state, at) {
 		return
 	}
-	r.refreshForEventLocked(state, at)
-	state.lastAppliedEventAt = at
 	state.lastRequestEventAt = at
 
 	switch state.state {
@@ -267,6 +266,7 @@ func (r *Runtime) RecordRequestSuccess(upstream string, at time.Time) {
 		state.consecutiveFailures = 0
 		state.halfOpenSuccesses = 0
 		state.ejectedUntil = time.Time{}
+		state.openWindowUntil = time.Time{}
 		state.lastError = ""
 		if state.state != StateHealthy {
 			state.state = StateHealthy
@@ -283,11 +283,9 @@ func (r *Runtime) RecordRequestFailure(upstream string, at time.Time, retryable 
 	if !ok {
 		return
 	}
-	if at.Before(state.lastAppliedEventAt) {
+	if !r.acceptEventLocked(state, at) {
 		return
 	}
-	r.refreshForEventLocked(state, at)
-	state.lastAppliedEventAt = at
 	state.lastRequestEventAt = at
 	state.lastError = errSummary
 
@@ -308,6 +306,7 @@ func (r *Runtime) RecordRequestFailure(upstream string, at time.Time, retryable 
 		state.source = SourceRequest
 		state.halfOpenSuccesses = 0
 		state.ejectedUntil = at.Add(r.openInterval)
+		state.openWindowUntil = state.ejectedUntil
 	}
 }
 
@@ -327,20 +326,41 @@ func (r *Runtime) refreshLocked(state *upstreamState) {
 	state.halfOpenSuccesses = 0
 }
 
-func (r *Runtime) refreshForEventLocked(state *upstreamState, at time.Time) {
-	if state.state != StateOpen {
-		return
+func (r *Runtime) acceptEventLocked(state *upstreamState, at time.Time) bool {
+	if !state.lastAppliedEventAt.IsZero() && !at.After(state.lastAppliedEventAt) {
+		return false
 	}
-	if state.ejectedUntil.IsZero() {
-		return
-	}
-	if at.Before(state.ejectedUntil) {
-		return
+	if !r.refreshForEventLocked(state, at) {
+		return false
 	}
 
-	state.state = StateHalfOpen
-	state.ejectedUntil = time.Time{}
-	state.halfOpenSuccesses = 0
+	state.lastAppliedEventAt = at
+	return true
+}
+
+func (r *Runtime) refreshForEventLocked(state *upstreamState, at time.Time) bool {
+	openBoundary := state.openWindowUntil
+	if openBoundary.IsZero() {
+		openBoundary = state.ejectedUntil
+	}
+
+	switch state.state {
+	case StateOpen:
+		if !openBoundary.IsZero() && at.Before(openBoundary) {
+			return false
+		}
+		if !openBoundary.IsZero() {
+			state.state = StateHalfOpen
+			state.ejectedUntil = time.Time{}
+			state.halfOpenSuccesses = 0
+		}
+	case StateHalfOpen:
+		if !openBoundary.IsZero() && at.Before(openBoundary) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func breakerStateFor(state State) BreakerState {

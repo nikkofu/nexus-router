@@ -305,6 +305,34 @@ health:
 			wantErr: "providers[0].probe.timeout",
 		},
 		{
+			name: "health section bare key",
+			health: `
+health:
+`,
+			wantErr: "health",
+		},
+		{
+			name: "health section null",
+			health: `
+health: null
+`,
+			wantErr: "health",
+		},
+		{
+			name: "breaker section bare key",
+			breaker: `
+breaker:
+`,
+			wantErr: "breaker",
+		},
+		{
+			name: "breaker section null",
+			breaker: `
+breaker: null
+`,
+			wantErr: "breaker",
+		},
+		{
 			name: "health require initial probe null",
 			health: `
 health:

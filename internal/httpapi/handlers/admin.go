@@ -28,3 +28,14 @@ func AdminRoutes(cfg config.Config) http.Handler {
 		})
 	})
 }
+
+func AdminUpstreams(runtime RuntimeSnapshotReader) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if runtime == nil {
+			http.Error(w, "runtime health unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		writeJSON(w, runtime.Snapshot())
+	})
+}

@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/nikkofu/nexus-router/internal/app"
 	"github.com/nikkofu/nexus-router/internal/auth"
@@ -112,6 +114,7 @@ type httpTestEnv struct {
 	Token   string
 	Primary *providerCapture
 	Backup  *providerCapture
+	Service *app.Service
 	closeFn func()
 }
 
@@ -262,8 +265,12 @@ func startHTTPTestEnv(t *testing.T, scenario string) httpTestEnv {
 		Token:   token,
 		Primary: primaryCap,
 		Backup:  backupCap,
+		Service: svc,
 		closeFn: func() {
 			publicSrv.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_ = svc.Shutdown(ctx)
 			if primarySrv != nil {
 				primarySrv.Close()
 			}
@@ -272,6 +279,130 @@ func startHTTPTestEnv(t *testing.T, scenario string) httpTestEnv {
 			}
 		},
 	}
+}
+
+type probeStubServer struct {
+	server    *httptest.Server
+	releaseCh chan struct{}
+}
+
+func (s *probeStubServer) URL() string {
+	if s == nil || s.server == nil {
+		return ""
+	}
+	return s.server.URL
+}
+
+func (s *probeStubServer) Release() {
+	if s == nil || s.releaseCh == nil {
+		return
+	}
+	select {
+	case <-s.releaseCh:
+	default:
+		close(s.releaseCh)
+	}
+}
+
+func (s *probeStubServer) Close() {
+	if s == nil {
+		return
+	}
+	s.Release()
+	if s.server != nil {
+		s.server.Close()
+	}
+}
+
+func newProbeStubServer(t *testing.T, status int) *probeStubServer {
+	t.Helper()
+
+	return newProbeStubServerWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(status)
+	}))
+}
+
+func newBlockingProbeStubServer(t *testing.T) *probeStubServer {
+	t.Helper()
+
+	releaseCh := make(chan struct{})
+	return newProbeStubServerWithHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
+		}
+		<-releaseCh
+		w.WriteHeader(http.StatusOK)
+	}), releaseCh)
+}
+
+func newProbeStubServerWithHandler(t *testing.T, handler http.Handler, releaseCh ...chan struct{}) *probeStubServer {
+	t.Helper()
+
+	stub := &probeStubServer{}
+	if len(releaseCh) > 0 {
+		stub.releaseCh = releaseCh[0]
+	}
+	stub.server = newHTTPServer(t, handler)
+	return stub
+}
+
+func startCustomHTTPTestEnv(t *testing.T, cfg config.Config) httpTestEnv {
+	t.Helper()
+
+	svc, err := app.New(cfg)
+	if err != nil {
+		t.Fatalf("app.New() error = %v", err)
+	}
+
+	publicSrv := newHTTPServer(t, svc.Handler())
+
+	return httpTestEnv{
+		BaseURL: publicSrv.URL,
+		Client:  publicSrv.Client(),
+		Service: svc,
+		closeFn: func() {
+			publicSrv.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_ = svc.Shutdown(ctx)
+		},
+	}
+}
+
+func get(t *testing.T, client *http.Client, url string) *http.Response {
+	t.Helper()
+
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("client.Get() error = %v", err)
+	}
+
+	return resp
+}
+
+func waitForStatus(t *testing.T, client *http.Client, url string, want int) *http.Response {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		resp := get(t, client, url)
+		body := readBody(t, resp)
+		if resp.StatusCode == want {
+			resp.Body = io.NopCloser(strings.NewReader(body))
+			return resp
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	resp := get(t, client, url)
+	body := readBody(t, resp)
+	t.Fatalf("status = %d, want %d, body = %q", resp.StatusCode, want, body)
+	return nil
 }
 
 func newHTTPProviderStub(t *testing.T, scenario string) (*httptest.Server, *providerCapture) {

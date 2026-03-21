@@ -21,6 +21,7 @@ type Service struct {
 	handler       http.Handler
 	tls           config.TLSConfig
 	runtimeCancel context.CancelFunc
+	runtimeDone   <-chan struct{}
 }
 
 func New(cfg config.Config) (*Service, error) {
@@ -48,7 +49,7 @@ func New(cfg config.Config) (*Service, error) {
 	planner := routeplanner.NewPlanner(cfg, runtimeHealth)
 	executor := runtime.NewExecutor(runtime.NewRegistry(cfg.Providers), http.DefaultClient)
 	executeService := service.NewExecuteService(capabilities.DefaultRegistry(), &planner, executor)
-	handler := httpapi.NewRouter(cfg, resolver, executeService)
+	handler := httpapi.NewRouter(cfg, resolver, executeService, runtimeHealth)
 
 	logger := observability.NewLogger()
 	server := &http.Server{
@@ -60,13 +61,17 @@ func New(cfg config.Config) (*Service, error) {
 	}
 
 	runtimeCtx, runtimeCancel := context.WithCancel(context.Background())
-	go health.NewProber(health.ProberOptions{
-		Providers:     cfg.Providers,
-		Runtime:       runtimeHealth,
-		Client:        http.DefaultClient,
-		ProbeInterval: healthProbeInterval,
-		ProbeTimeout:  healthProbeTimeout,
-	}).Start(runtimeCtx)
+	runtimeDone := make(chan struct{})
+	go func() {
+		defer close(runtimeDone)
+		health.NewProber(health.ProberOptions{
+			Providers:     cfg.Providers,
+			Runtime:       runtimeHealth,
+			Client:        http.DefaultClient,
+			ProbeInterval: healthProbeInterval,
+			ProbeTimeout:  healthProbeTimeout,
+		}).Start(runtimeCtx)
+	}()
 
 	logger.Info("configured nexus-router service", "addr", server.Addr)
 
@@ -75,6 +80,7 @@ func New(cfg config.Config) (*Service, error) {
 		handler:       handler,
 		tls:           cfg.Server.TLS,
 		runtimeCancel: runtimeCancel,
+		runtimeDone:   runtimeDone,
 	}, nil
 }
 
@@ -116,4 +122,15 @@ func intOrDefault(value, fallback int) int {
 	}
 
 	return value
+}
+
+func (s *Service) stopRuntimeWork() {
+	if s.runtimeCancel != nil {
+		s.runtimeCancel()
+		s.runtimeCancel = nil
+	}
+	if s.runtimeDone != nil {
+		<-s.runtimeDone
+		s.runtimeDone = nil
+	}
 }

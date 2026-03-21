@@ -12,6 +12,7 @@ func (s *Service) Start() error {
 
 	ln, err := net.Listen("tcp", s.server.Addr)
 	if err != nil {
+		s.stopRuntimeWork()
 		return err
 	}
 
@@ -23,17 +24,22 @@ func (s *Service) Serve(ln net.Listener) error {
 		return nil
 	}
 
+	var err error
 	if s.tls.Mode == "file" {
-		return s.server.ServeTLS(ln, s.tls.CertFile, s.tls.KeyFile)
+		err = s.server.ServeTLS(ln, s.tls.CertFile, s.tls.KeyFile)
+	} else {
+		err = s.server.Serve(ln)
 	}
 
-	return s.server.Serve(ln)
+	if err != nil {
+		s.stopRuntimeWork()
+	}
+
+	return err
 }
 
 func (s *Service) Shutdown(ctx context.Context) error {
-	if s.runtimeCancel != nil {
-		s.runtimeCancel()
-	}
+	s.stopRuntimeWork()
 
 	if s.server == nil {
 		return nil

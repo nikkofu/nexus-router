@@ -263,6 +263,13 @@ breaker:
 `,
 		},
 		{
+			name: "health probe timeout empty",
+			health: `
+health:
+  probe_timeout: ""
+`,
+		},
+		{
 			name: "provider probe interval empty",
 			probe: `    probe:
       interval: ""
@@ -272,6 +279,19 @@ breaker:
 			name: "provider probe timeout empty",
 			probe: `    probe:
       timeout: ""
+`,
+		},
+		{
+			name: "health probe interval bare key",
+			health: `
+health:
+  probe_interval:
+`,
+		},
+		{
+			name: "provider probe timeout null",
+			probe: `    probe:
+      timeout: null
 `,
 		},
 	}

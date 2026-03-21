@@ -32,6 +32,9 @@ func Load(r io.Reader) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	if err := validateExplicitRuntimeHealthNullOverrides(data); err != nil {
+		return Config{}, err
+	}
 
 	var cfg Config
 	var presence runtimeHealthDefaultsPresence
@@ -101,4 +104,59 @@ func validateExplicitRuntimeHealthDurationOverrides(presence runtimeHealthDefaul
 		}
 	}
 	return nil
+}
+
+func validateExplicitRuntimeHealthNullOverrides(data []byte) error {
+	var root yaml.Node
+	if err := yaml.NewDecoder(bytes.NewReader(data)).Decode(&root); err != nil {
+		return err
+	}
+	if len(root.Content) == 0 {
+		return nil
+	}
+
+	top := root.Content[0]
+	health := mappingValue(top, "health")
+	if isNullScalar(mappingValue(health, "probe_interval")) {
+		return fmt.Errorf("health.probe_interval must not be null when explicitly set")
+	}
+	if isNullScalar(mappingValue(health, "probe_timeout")) {
+		return fmt.Errorf("health.probe_timeout must not be null when explicitly set")
+	}
+
+	breaker := mappingValue(top, "breaker")
+	if isNullScalar(mappingValue(breaker, "open_interval")) {
+		return fmt.Errorf("breaker.open_interval must not be null when explicitly set")
+	}
+
+	providers := mappingValue(top, "providers")
+	if providers != nil && providers.Kind == yaml.SequenceNode {
+		for i, provider := range providers.Content {
+			probe := mappingValue(provider, "probe")
+			if isNullScalar(mappingValue(probe, "interval")) {
+				return fmt.Errorf("providers[%d].probe.interval must not be null when explicitly set", i)
+			}
+			if isNullScalar(mappingValue(probe, "timeout")) {
+				return fmt.Errorf("providers[%d].probe.timeout must not be null when explicitly set", i)
+			}
+		}
+	}
+
+	return nil
+}
+
+func mappingValue(node *yaml.Node, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
+}
+
+func isNullScalar(node *yaml.Node) bool {
+	return node != nil && node.Kind == yaml.ScalarNode && node.Tag == "!!null"
 }

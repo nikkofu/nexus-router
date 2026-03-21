@@ -31,6 +31,10 @@ func (s *Service) Serve(ln net.Listener) error {
 }
 
 func (s *Service) Shutdown(ctx context.Context) error {
+	if s.runtimeCancel != nil {
+		s.runtimeCancel()
+	}
+
 	if s.server == nil {
 		return nil
 	}

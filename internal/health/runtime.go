@@ -167,7 +167,10 @@ func (r *Runtime) RecordProbeSuccess(upstream string, at time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	state := r.ensureUpstreamLocked(upstream)
+	state, ok := r.upstreams[upstream]
+	if !ok {
+		return
+	}
 	r.refreshLocked(state)
 
 	state.lastProbeAt = at
@@ -201,7 +204,10 @@ func (r *Runtime) RecordProbeFailure(upstream string, at time.Time, errSummary s
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	state := r.ensureUpstreamLocked(upstream)
+	state, ok := r.upstreams[upstream]
+	if !ok {
+		return
+	}
 	r.refreshLocked(state)
 
 	state.lastProbeAt = at
@@ -216,7 +222,7 @@ func (r *Runtime) RecordProbeFailure(upstream string, at time.Time, errSummary s
 		state.state = StateOpen
 		state.source = SourceProbe
 		state.halfOpenSuccesses = 0
-		state.ejectedUntil = r.now().Add(r.openInterval)
+		state.ejectedUntil = at.Add(r.openInterval)
 		return
 	}
 
@@ -225,7 +231,7 @@ func (r *Runtime) RecordProbeFailure(upstream string, at time.Time, errSummary s
 		state.state = StateOpen
 		state.source = SourceProbe
 		state.halfOpenSuccesses = 0
-		state.ejectedUntil = r.now().Add(r.openInterval)
+		state.ejectedUntil = at.Add(r.openInterval)
 	}
 }
 
@@ -233,7 +239,10 @@ func (r *Runtime) RecordRequestSuccess(upstream string, _ time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	state := r.ensureUpstreamLocked(upstream)
+	state, ok := r.upstreams[upstream]
+	if !ok {
+		return
+	}
 	r.refreshLocked(state)
 
 	switch state.state {
@@ -251,11 +260,14 @@ func (r *Runtime) RecordRequestSuccess(upstream string, _ time.Time) {
 	}
 }
 
-func (r *Runtime) RecordRequestFailure(upstream string, _ time.Time, retryable bool, outputCommitted bool, errSummary string) {
+func (r *Runtime) RecordRequestFailure(upstream string, at time.Time, retryable bool, outputCommitted bool, errSummary string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	state := r.ensureUpstreamLocked(upstream)
+	state, ok := r.upstreams[upstream]
+	if !ok {
+		return
+	}
 	r.refreshLocked(state)
 	state.lastError = errSummary
 
@@ -275,24 +287,8 @@ func (r *Runtime) RecordRequestFailure(upstream string, _ time.Time, retryable b
 		state.state = StateOpen
 		state.source = SourceRequest
 		state.halfOpenSuccesses = 0
-		state.ejectedUntil = r.now().Add(r.openInterval)
+		state.ejectedUntil = at.Add(r.openInterval)
 	}
-}
-
-func (r *Runtime) ensureUpstreamLocked(name string) *upstreamState {
-	if state, ok := r.upstreams[name]; ok {
-		return state
-	}
-
-	state := &upstreamState{
-		name:   name,
-		state:  StateUnknown,
-		source: SourceStartup,
-	}
-	r.upstreams[name] = state
-	r.order = append(r.order, name)
-
-	return state
 }
 
 func (r *Runtime) refreshLocked(state *upstreamState) {

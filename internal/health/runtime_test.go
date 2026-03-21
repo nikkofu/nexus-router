@@ -305,6 +305,106 @@ func TestRuntimeRequestFailuresRespectRetryableAndOutputCommitted(t *testing.T) 
 	}
 }
 
+func TestRuntimeOpenEjectionUsesEventTimestampForProbeFailures(t *testing.T) {
+	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	eventAt := now.Add(-10 * time.Second)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         1,
+		RecoverySuccessThreshold: 1,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return now },
+	})
+
+	rt.RecordProbeFailure("openai-main", eventAt, "timeout")
+
+	up := upstreamByName(t, rt.Snapshot(), "openai-main")
+	wantEjectedUntil := eventAt.Add(30 * time.Second)
+	if !up.EjectedUntil.Equal(wantEjectedUntil) {
+		t.Fatalf("ejected_until = %v, want %v (anchored to event timestamp)", up.EjectedUntil, wantEjectedUntil)
+	}
+}
+
+func TestRuntimeOpenEjectionUsesEventTimestampForRequestFailures(t *testing.T) {
+	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	eventAt := now.Add(-10 * time.Second)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         1,
+		RecoverySuccessThreshold: 1,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return now },
+	})
+
+	rt.RecordRequestFailure("openai-main", eventAt, true, false, "timeout")
+
+	up := upstreamByName(t, rt.Snapshot(), "openai-main")
+	wantEjectedUntil := eventAt.Add(30 * time.Second)
+	if !up.EjectedUntil.Equal(wantEjectedUntil) {
+		t.Fatalf("ejected_until = %v, want %v (anchored to event timestamp)", up.EjectedUntil, wantEjectedUntil)
+	}
+}
+
+func TestRuntimeUnknownWriteEventsDoNotCreateUpstreamEntries(t *testing.T) {
+	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         1,
+		RecoverySuccessThreshold: 1,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return now },
+	})
+
+	rt.RecordProbeFailure("ghost-upstream", now, "timeout")
+	rt.RecordProbeSuccess("ghost-upstream", now)
+	rt.RecordRequestFailure("ghost-upstream", now, true, false, "timeout")
+	rt.RecordRequestSuccess("ghost-upstream", now)
+
+	snap := rt.Snapshot()
+	if len(snap.Upstreams) != 1 {
+		t.Fatalf("len(snapshot.upstreams) = %d, want 1 (configured upstreams only)", len(snap.Upstreams))
+	}
+	if snap.Upstreams[0].Name != "openai-main" {
+		t.Fatalf("snapshot.upstreams[0].name = %q, want %q", snap.Upstreams[0].Name, "openai-main")
+	}
+}
+
+func TestRuntimeWritePathRefreshesOpenToHalfOpenWithoutSnapshotRead(t *testing.T) {
+	current := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         1,
+		RecoverySuccessThreshold: 2,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return current },
+	})
+
+	rt.RecordProbeFailure("openai-main", current, "timeout")
+	current = current.Add(31 * time.Second)
+
+	// This write should refresh open -> half_open internally first, then apply the half-open success.
+	rt.RecordProbeSuccess("openai-main", current)
+
+	up := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if up.State != StateHalfOpen {
+		t.Fatalf("state after post-cooldown probe success write = %q, want %q", up.State, StateHalfOpen)
+	}
+	if up.BreakerState != BreakerStateHalfOpen {
+		t.Fatalf("breaker_state after post-cooldown probe success write = %q, want %q", up.BreakerState, BreakerStateHalfOpen)
+	}
+	if up.Eligible {
+		t.Fatal("eligible after first half-open success = true, want false")
+	}
+}
+
 func upstreamByName(t *testing.T, snap RuntimeSnapshot, name string) UpstreamStatus {
 	t.Helper()
 

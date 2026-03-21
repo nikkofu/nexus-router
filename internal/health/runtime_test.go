@@ -481,6 +481,123 @@ func TestRuntimeIgnoresOlderRequestFailureAfterNewerRequestSuccess(t *testing.T)
 	}
 }
 
+func TestRuntimeIgnoresOlderRequestSuccessAfterNewerProbeFailure(t *testing.T) {
+	base := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         1,
+		RecoverySuccessThreshold: 1,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return base },
+	})
+
+	rt.RecordProbeSuccess("openai-main", base.Add(1*time.Second))
+	rt.RecordProbeFailure("openai-main", base.Add(3*time.Second), "probe-timeout")
+	rt.RecordRequestSuccess("openai-main", base.Add(2*time.Second))
+
+	up := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if up.State != StateOpen {
+		t.Fatalf("state after older request success following newer probe failure = %q, want %q", up.State, StateOpen)
+	}
+	if up.Source != SourceProbe {
+		t.Fatalf("source after older request success following newer probe failure = %q, want %q", up.Source, SourceProbe)
+	}
+	if up.LastError != "probe-timeout" {
+		t.Fatalf("last_error after older request success following newer probe failure = %q, want %q", up.LastError, "probe-timeout")
+	}
+}
+
+func TestRuntimeIgnoresOlderRequestFailureAfterNewerProbeSuccess(t *testing.T) {
+	base := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         1,
+		RecoverySuccessThreshold: 1,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return base },
+	})
+
+	rt.RecordProbeSuccess("openai-main", base.Add(3*time.Second))
+	rt.RecordRequestFailure("openai-main", base.Add(2*time.Second), true, false, "older-timeout")
+
+	up := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if up.State != StateHealthy {
+		t.Fatalf("state after older request failure following newer probe success = %q, want %q", up.State, StateHealthy)
+	}
+	if up.Source != SourceProbe {
+		t.Fatalf("source after older request failure following newer probe success = %q, want %q", up.Source, SourceProbe)
+	}
+	if up.LastError != "" {
+		t.Fatalf("last_error after older request failure following newer probe success = %q, want empty string", up.LastError)
+	}
+}
+
+func TestRuntimeStaleProbeSuccessAfterCooldownDoesNotActAsHalfOpen(t *testing.T) {
+	current := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         1,
+		RecoverySuccessThreshold: 1,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return current },
+	})
+
+	openAt := current
+	rt.RecordProbeFailure("openai-main", openAt, "timeout")
+
+	// Result arrives after wall-clock cooldown, but its event time is still inside open window.
+	current = openAt.Add(40 * time.Second)
+	rt.RecordProbeSuccess("openai-main", openAt.Add(10*time.Second))
+
+	// Freeze read time before ejected-until so Snapshot() doesn't do read-path refresh.
+	current = openAt.Add(20 * time.Second)
+	up := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if up.State != StateOpen {
+		t.Fatalf("state after stale probe success delivery = %q, want %q", up.State, StateOpen)
+	}
+	wantEjectedUntil := openAt.Add(30 * time.Second)
+	if !up.EjectedUntil.Equal(wantEjectedUntil) {
+		t.Fatalf("ejected_until after stale probe success delivery = %v, want unchanged %v", up.EjectedUntil, wantEjectedUntil)
+	}
+}
+
+func TestRuntimeStaleProbeFailureAfterCooldownDoesNotActAsHalfOpen(t *testing.T) {
+	current := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         1,
+		RecoverySuccessThreshold: 1,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return current },
+	})
+
+	openAt := current
+	rt.RecordProbeFailure("openai-main", openAt, "timeout")
+
+	// Result arrives after wall-clock cooldown, but its event time is still inside open window.
+	current = openAt.Add(40 * time.Second)
+	rt.RecordProbeFailure("openai-main", openAt.Add(10*time.Second), "late-timeout")
+
+	// Freeze read time before ejected-until so Snapshot() doesn't do read-path refresh.
+	current = openAt.Add(20 * time.Second)
+	up := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if up.State != StateOpen {
+		t.Fatalf("state after stale probe failure delivery = %q, want %q", up.State, StateOpen)
+	}
+	wantEjectedUntil := openAt.Add(30 * time.Second)
+	if !up.EjectedUntil.Equal(wantEjectedUntil) {
+		t.Fatalf("ejected_until after stale probe failure delivery = %v, want unchanged %v", up.EjectedUntil, wantEjectedUntil)
+	}
+}
+
 func upstreamByName(t *testing.T, snap RuntimeSnapshot, name string) UpstreamStatus {
 	t.Helper()
 

@@ -42,6 +42,7 @@ type upstreamState struct {
 	source              Source
 	halfOpenSuccesses   int
 	lastRequestEventAt  time.Time
+	lastAppliedEventAt  time.Time
 }
 
 func NewRuntime(opts RuntimeOptions) *Runtime {
@@ -172,7 +173,11 @@ func (r *Runtime) RecordProbeSuccess(upstream string, at time.Time) {
 	if !ok {
 		return
 	}
-	r.refreshLocked(state)
+	if at.Before(state.lastAppliedEventAt) {
+		return
+	}
+	r.refreshForEventLocked(state, at)
+	state.lastAppliedEventAt = at
 
 	state.lastProbeAt = at
 	state.lastProbeOK = true
@@ -209,7 +214,11 @@ func (r *Runtime) RecordProbeFailure(upstream string, at time.Time, errSummary s
 	if !ok {
 		return
 	}
-	r.refreshLocked(state)
+	if at.Before(state.lastAppliedEventAt) {
+		return
+	}
+	r.refreshForEventLocked(state, at)
+	state.lastAppliedEventAt = at
 
 	state.lastProbeAt = at
 	state.lastProbeOK = false
@@ -244,10 +253,11 @@ func (r *Runtime) RecordRequestSuccess(upstream string, at time.Time) {
 	if !ok {
 		return
 	}
-	r.refreshLocked(state)
-	if at.Before(state.lastRequestEventAt) {
+	if at.Before(state.lastAppliedEventAt) {
 		return
 	}
+	r.refreshForEventLocked(state, at)
+	state.lastAppliedEventAt = at
 	state.lastRequestEventAt = at
 
 	switch state.state {
@@ -273,10 +283,11 @@ func (r *Runtime) RecordRequestFailure(upstream string, at time.Time, retryable 
 	if !ok {
 		return
 	}
-	r.refreshLocked(state)
-	if at.Before(state.lastRequestEventAt) {
+	if at.Before(state.lastAppliedEventAt) {
 		return
 	}
+	r.refreshForEventLocked(state, at)
+	state.lastAppliedEventAt = at
 	state.lastRequestEventAt = at
 	state.lastError = errSummary
 
@@ -308,6 +319,22 @@ func (r *Runtime) refreshLocked(state *upstreamState) {
 		return
 	}
 	if r.now().Before(state.ejectedUntil) {
+		return
+	}
+
+	state.state = StateHalfOpen
+	state.ejectedUntil = time.Time{}
+	state.halfOpenSuccesses = 0
+}
+
+func (r *Runtime) refreshForEventLocked(state *upstreamState, at time.Time) {
+	if state.state != StateOpen {
+		return
+	}
+	if state.ejectedUntil.IsZero() {
+		return
+	}
+	if at.Before(state.ejectedUntil) {
 		return
 	}
 

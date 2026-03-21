@@ -172,6 +172,80 @@ func TestRuntimeHalfOpenRequiresRecoverySuccessThreshold(t *testing.T) {
 	}
 }
 
+func TestRuntimeHalfOpenIgnoresRequestFailureForEjection(t *testing.T) {
+	current := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         1,
+		RecoverySuccessThreshold: 1,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return current },
+	})
+
+	rt.RecordProbeFailure("openai-main", current, "timeout")
+	current = current.Add(31 * time.Second)
+	_ = rt.Snapshot() // trigger open -> half_open on read
+
+	before := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if before.State != StateHalfOpen {
+		t.Fatalf("state before request failure = %q, want %q", before.State, StateHalfOpen)
+	}
+
+	rt.RecordRequestFailure("openai-main", current, true, false, "request-timeout")
+	after := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if after.State != StateHalfOpen {
+		t.Fatalf("state after request failure in half_open = %q, want %q", after.State, StateHalfOpen)
+	}
+	if after.BreakerState != BreakerStateHalfOpen {
+		t.Fatalf("breaker_state after request failure in half_open = %q, want %q", after.BreakerState, BreakerStateHalfOpen)
+	}
+	if !after.EjectedUntil.IsZero() {
+		t.Fatalf("ejected_until after request failure in half_open = %v, want zero time", after.EjectedUntil)
+	}
+	if after.Source != SourceProbe {
+		t.Fatalf("source after request failure in half_open = %q, want %q", after.Source, SourceProbe)
+	}
+}
+
+func TestRuntimeSuccessNoOpDoesNotOverwriteSource(t *testing.T) {
+	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
+	rt := NewRuntime(RuntimeOptions{
+		Upstreams: []RuntimeUpstream{
+			{Name: "openai-main", Provider: "openai"},
+		},
+		FailureThreshold:         2,
+		RecoverySuccessThreshold: 1,
+		OpenInterval:             30 * time.Second,
+		Now:                      func() time.Time { return now },
+	})
+
+	rt.RecordProbeSuccess("openai-main", now)
+	afterProbeTransition := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if afterProbeTransition.Source != SourceProbe {
+		t.Fatalf("source after unknown->healthy probe success = %q, want %q", afterProbeTransition.Source, SourceProbe)
+	}
+
+	rt.RecordRequestSuccess("openai-main", now)
+	afterRequestNoOp := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if afterRequestNoOp.State != StateHealthy {
+		t.Fatalf("state after healthy->healthy request success = %q, want %q", afterRequestNoOp.State, StateHealthy)
+	}
+	if afterRequestNoOp.Source != SourceProbe {
+		t.Fatalf("source after healthy->healthy request success = %q, want unchanged %q", afterRequestNoOp.Source, SourceProbe)
+	}
+
+	rt.RecordProbeSuccess("openai-main", now)
+	afterProbeNoOp := upstreamByName(t, rt.Snapshot(), "openai-main")
+	if afterProbeNoOp.State != StateHealthy {
+		t.Fatalf("state after healthy->healthy probe success = %q, want %q", afterProbeNoOp.State, StateHealthy)
+	}
+	if afterProbeNoOp.Source != SourceProbe {
+		t.Fatalf("source after healthy->healthy probe success = %q, want unchanged %q", afterProbeNoOp.Source, SourceProbe)
+	}
+}
+
 func TestRuntimeRequestFailuresRespectRetryableAndOutputCommitted(t *testing.T) {
 	now := time.Date(2026, 3, 21, 10, 0, 0, 0, time.UTC)
 	rt := NewRuntime(RuntimeOptions{

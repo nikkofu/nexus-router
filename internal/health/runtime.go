@@ -177,21 +177,23 @@ func (r *Runtime) RecordProbeSuccess(upstream string, at time.Time) {
 	switch state.state {
 	case StateHalfOpen:
 		state.halfOpenSuccesses++
-		state.source = SourceProbe
 		if state.halfOpenSuccesses >= r.recoverySuccessThreshold {
 			state.state = StateHealthy
 			state.consecutiveFailures = 0
 			state.halfOpenSuccesses = 0
 			state.ejectedUntil = time.Time{}
+			state.source = SourceProbe
 		}
 	case StateOpen:
 		// Stay open until cooldown transitions to half-open.
 	default:
-		state.state = StateHealthy
-		state.source = SourceProbe
 		state.consecutiveFailures = 0
 		state.halfOpenSuccesses = 0
 		state.ejectedUntil = time.Time{}
+		if state.state != StateHealthy {
+			state.state = StateHealthy
+			state.source = SourceProbe
+		}
 	}
 }
 
@@ -238,12 +240,14 @@ func (r *Runtime) RecordRequestSuccess(upstream string, _ time.Time) {
 	case StateOpen, StateHalfOpen:
 		return
 	default:
-		state.state = StateHealthy
-		state.source = SourceRequest
 		state.consecutiveFailures = 0
 		state.halfOpenSuccesses = 0
 		state.ejectedUntil = time.Time{}
 		state.lastError = ""
+		if state.state != StateHealthy {
+			state.state = StateHealthy
+			state.source = SourceRequest
+		}
 	}
 }
 
@@ -263,11 +267,6 @@ func (r *Runtime) RecordRequestFailure(upstream string, _ time.Time, retryable b
 	case StateOpen:
 		return
 	case StateHalfOpen:
-		state.consecutiveFailures++
-		state.state = StateOpen
-		state.source = SourceRequest
-		state.halfOpenSuccesses = 0
-		state.ejectedUntil = r.now().Add(r.openInterval)
 		return
 	}
 

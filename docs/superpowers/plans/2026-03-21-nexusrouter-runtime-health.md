@@ -384,6 +384,11 @@ Readiness rules:
 - `200` only when runtime started, initial probe complete if required, and every required route group has an eligible upstream
 - `503` otherwise
 
+Implementation note:
+
+- derive route-group readiness from `Snapshot().Upstreams` joined with configured route-group membership from `cfg.Models`, `cfg.Routing.RouteGroups`, and `cfg.Providers`
+- do not treat the top-level `has_eligible_upstream` snapshot flag as sufficient for `/readyz`
+
 - [ ] **Step 4: Add `/admin/upstreams`**
 
 Pin exact JSON field names in both handler and tests:
@@ -396,6 +401,20 @@ Pin exact JSON field names in both handler and tests:
   "upstreams": [...]
 }
 ```
+
+Assert every spec-required upstream field in tests:
+
+- `name`
+- `provider`
+- `state`
+- `eligible`
+- `consecutive_failures`
+- `ejected_until`
+- `last_probe_at`
+- `last_probe_ok`
+- `last_error`
+- `breaker_state`
+- `source`
 
 - [ ] **Step 5: Keep `/admin/routes` unchanged in responsibility**
 
@@ -487,6 +506,12 @@ Cover:
 - `/admin/upstreams` exact snapshot fields
 - primary ejected -> planner skips it
 - half-open probe recovery -> upstream returns to `healthy`
+
+Keep runtime-health tests hermetic:
+
+- use local stub probe servers instead of real provider base URLs
+- override example/test configs inside tests when background probes would otherwise target public upstream hosts
+- ensure `app.New()`-started probe goroutines are canceled through service shutdown in every test that constructs a service
 
 - [ ] **Step 2: Run dedicated runtime-health tests**
 

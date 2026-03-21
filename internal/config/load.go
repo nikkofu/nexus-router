@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 
 	"gopkg.in/yaml.v3"
@@ -18,6 +19,12 @@ type runtimeHealthDefaultsPresence struct {
 		OpenInterval             *string `yaml:"open_interval"`
 		RecoverySuccessThreshold *int    `yaml:"recovery_success_threshold"`
 	} `yaml:"breaker"`
+	Providers []struct {
+		Probe struct {
+			Interval *string `yaml:"interval"`
+			Timeout  *string `yaml:"timeout"`
+		} `yaml:"probe"`
+	} `yaml:"providers"`
 }
 
 func Load(r io.Reader) (Config, error) {
@@ -37,6 +44,10 @@ func Load(r io.Reader) (Config, error) {
 	dec = yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&cfg); err != nil {
+		return Config{}, err
+	}
+
+	if err := validateExplicitRuntimeHealthDurationOverrides(presence); err != nil {
 		return Config{}, err
 	}
 
@@ -69,4 +80,25 @@ func applyRuntimeHealthDefaults(cfg *Config, presence runtimeHealthDefaultsPrese
 	if presence.Breaker.RecoverySuccessThreshold == nil {
 		cfg.Breaker.RecoverySuccessThreshold = 1
 	}
+}
+
+func validateExplicitRuntimeHealthDurationOverrides(presence runtimeHealthDefaultsPresence) error {
+	if presence.Health.ProbeInterval != nil && *presence.Health.ProbeInterval == "" {
+		return fmt.Errorf("health.probe_interval must not be empty when explicitly set")
+	}
+	if presence.Health.ProbeTimeout != nil && *presence.Health.ProbeTimeout == "" {
+		return fmt.Errorf("health.probe_timeout must not be empty when explicitly set")
+	}
+	if presence.Breaker.OpenInterval != nil && *presence.Breaker.OpenInterval == "" {
+		return fmt.Errorf("breaker.open_interval must not be empty when explicitly set")
+	}
+	for i, provider := range presence.Providers {
+		if provider.Probe.Interval != nil && *provider.Probe.Interval == "" {
+			return fmt.Errorf("providers[%d].probe.interval must not be empty when explicitly set", i)
+		}
+		if provider.Probe.Timeout != nil && *provider.Probe.Timeout == "" {
+			return fmt.Errorf("providers[%d].probe.timeout must not be empty when explicitly set", i)
+		}
+	}
+	return nil
 }

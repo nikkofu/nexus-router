@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -193,5 +194,95 @@ breaker:
 	}
 	if cfg.Breaker.RecoverySuccessThreshold != 2 {
 		t.Fatalf("breaker.recovery_success_threshold = %d, want %d", cfg.Breaker.RecoverySuccessThreshold, 2)
+	}
+}
+
+func TestLoadConfigRejectsInvalidRuntimeHealthExplicitOverrides(t *testing.T) {
+	base := `
+server:
+  listen_addr: 127.0.0.1:8080
+  tls:
+    mode: disabled
+auth:
+  client_keys:
+    - id: local-openai
+      secret: sk-nx-openai
+      active: true
+      allowed_model_patterns:
+        - openai/gpt-*
+models:
+  - pattern: openai/gpt-*
+    route_group: openai-family
+providers:
+  - name: openai-main
+    provider: openai
+    base_url: https://api.openai.com
+    api_key_env: OPENAI_API_KEY
+%s
+routing:
+  route_groups:
+    - name: openai-family
+      primary: openai-main
+      fallbacks: []
+%s
+%s
+`
+
+	tests := []struct {
+		name string
+		probe string
+		health string
+		breaker string
+	}{
+		{
+			name: "failure threshold zero",
+			breaker: `
+breaker:
+  failure_threshold: 0
+`,
+		},
+		{
+			name: "recovery success threshold zero",
+			breaker: `
+breaker:
+  recovery_success_threshold: 0
+`,
+		},
+		{
+			name: "health probe interval empty",
+			health: `
+health:
+  probe_interval: ""
+`,
+		},
+		{
+			name: "breaker open interval empty",
+			breaker: `
+breaker:
+  open_interval: ""
+`,
+		},
+		{
+			name: "provider probe interval empty",
+			probe: `    probe:
+      interval: ""
+`,
+		},
+		{
+			name: "provider probe timeout empty",
+			probe: `    probe:
+      timeout: ""
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := fmt.Sprintf(base, tt.probe, tt.health, tt.breaker)
+			_, err := config.Load(strings.NewReader(cfg))
+			if err == nil {
+				t.Fatal("expected Load() error")
+			}
+		})
 	}
 }

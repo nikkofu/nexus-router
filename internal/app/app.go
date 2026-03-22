@@ -47,7 +47,7 @@ func New(cfg config.Config) (*Service, error) {
 	}
 
 	planner := routeplanner.NewPlanner(cfg, runtimeHealth)
-	executor := runtime.NewExecutor(runtime.NewRegistry(cfg.Providers), http.DefaultClient)
+	executor := runtime.NewExecutor(runtime.NewRegistry(cfg.Providers), http.DefaultClient, runtimeHealth)
 	executeService := service.NewExecuteService(capabilities.DefaultRegistry(), &planner, executor)
 	handler := httpapi.NewRouter(cfg, resolver, executeService, runtimeHealth)
 

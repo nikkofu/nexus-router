@@ -44,6 +44,7 @@ func TestRuntimeExecutorDispatchesOpenAIAdapterForOpenAIProvider(t *testing.T) {
 			},
 		}),
 		server.Client(),
+		nil,
 	)
 
 	result, err := executor.Execute(context.Background(), "openai-main", canonical.Request{
@@ -76,6 +77,7 @@ func TestRuntimeExecutorDispatchesAnthropicAdapterForAnthropicProvider(t *testin
 			},
 		}),
 		server.Client(),
+		nil,
 	)
 
 	result, err := executor.Execute(context.Background(), "anthropic-main", canonical.Request{
@@ -96,7 +98,7 @@ func TestRuntimeExecutorDispatchesAnthropicAdapterForAnthropicProvider(t *testin
 }
 
 func TestRuntimeExecutorWrapsUnknownUpstreamError(t *testing.T) {
-	executor := runtime.NewExecutor(runtime.NewRegistry(nil), nil)
+	executor := runtime.NewExecutor(runtime.NewRegistry(nil), nil, nil)
 
 	_, err := executor.Execute(context.Background(), "missing-upstream", canonical.Request{})
 	if err == nil {
@@ -116,6 +118,7 @@ func TestRuntimeExecutorWrapsUnknownProviderError(t *testing.T) {
 				BaseURL:  "https://example.com",
 			},
 		}),
+		nil,
 		nil,
 	)
 

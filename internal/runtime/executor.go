@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/nikkofu/nexus-router/internal/canonical"
 	"github.com/nikkofu/nexus-router/internal/config"
@@ -17,17 +18,26 @@ type providerAdapter interface {
 	Execute(ctx context.Context, upstream config.ProviderConfig, req canonical.Request) (providers.Result, error)
 }
 
+type requestOutcomeWriter interface {
+	RecordRequestSuccess(upstream string, at time.Time)
+	RecordRequestFailure(upstream string, at time.Time, retryable bool, outputCommitted bool, errSummary string)
+}
+
 type Executor struct {
 	registry  Registry
 	openai    providerAdapter
 	anthropic providerAdapter
+	runtime   requestOutcomeWriter
+	now       func() time.Time
 }
 
-func NewExecutor(registry Registry, client *http.Client) *Executor {
+func NewExecutor(registry Registry, client *http.Client, runtime requestOutcomeWriter) *Executor {
 	return &Executor{
 		registry:  registry,
 		openai:    openai.NewAdapter(client),
 		anthropic: anthropic.NewAdapter(client),
+		runtime:   runtime,
+		now:       time.Now,
 	}
 }
 
@@ -49,23 +59,36 @@ func (e *Executor) Execute(ctx context.Context, upstream string, req canonical.R
 
 	result, err := adapter.Execute(ctx, providerConfig, req)
 	if err != nil {
-		var execErr *providers.ExecutionError
-		if errors.As(err, &execErr) {
-			return providers.Result{}, &providers.ExecutionError{
-				Err:             fmt.Errorf("runtime executor: execute provider %q for upstream %q: %w", providerConfig.Provider, upstream, execErr.Err),
-				Retryable:       execErr.Retryable,
-				OutputCommitted: execErr.OutputCommitted,
-			}
+		execErr := wrapExecutionError(providerConfig, upstream, err)
+		if e.runtime != nil {
+			e.runtime.RecordRequestFailure(upstream, e.now(), execErr.Retryable, execErr.OutputCommitted, execErr.Error())
 		}
 
-		return providers.Result{}, &providers.ExecutionError{
-			Err:             fmt.Errorf("runtime executor: execute provider %q for upstream %q: %w", providerConfig.Provider, upstream, err),
-			Retryable:       isRetryableProviderError(err),
-			OutputCommitted: false,
-		}
+		return providers.Result{}, execErr
+	}
+
+	if e.runtime != nil {
+		e.runtime.RecordRequestSuccess(upstream, e.now())
 	}
 
 	return result, nil
+}
+
+func wrapExecutionError(providerConfig config.ProviderConfig, upstream string, err error) *providers.ExecutionError {
+	var execErr *providers.ExecutionError
+	if errors.As(err, &execErr) {
+		return &providers.ExecutionError{
+			Err:             fmt.Errorf("runtime executor: execute provider %q for upstream %q: %w", providerConfig.Provider, upstream, execErr.Err),
+			Retryable:       execErr.Retryable,
+			OutputCommitted: execErr.OutputCommitted,
+		}
+	}
+
+	return &providers.ExecutionError{
+		Err:             fmt.Errorf("runtime executor: execute provider %q for upstream %q: %w", providerConfig.Provider, upstream, err),
+		Retryable:       isRetryableProviderError(err),
+		OutputCommitted: false,
+	}
 }
 
 func isRetryableProviderError(err error) bool {

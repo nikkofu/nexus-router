@@ -86,6 +86,9 @@ func (c *providerCapture) record(r *http.Request) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if r.URL.Path == "/v1/models" {
+		return
+	}
 	c.hits++
 	c.path = r.URL.Path
 	c.body = string(body)
@@ -126,6 +129,11 @@ func (e httpTestEnv) Close() {
 }
 
 func startHTTPTestEnv(t *testing.T, scenario string) httpTestEnv {
+	t.Helper()
+	return startHTTPTestEnvWithConfigMutator(t, scenario, nil)
+}
+
+func startHTTPTestEnvWithConfigMutator(t *testing.T, scenario string, mutate func(*config.Config)) httpTestEnv {
 	t.Helper()
 
 	const token = "sk-nx-local-dev"
@@ -251,6 +259,9 @@ func startHTTPTestEnv(t *testing.T, scenario string) httpTestEnv {
 		Routing: config.RoutingConfig{
 			RouteGroups: []config.RouteGroupConfig{routeGroup},
 		},
+	}
+	if mutate != nil {
+		mutate(&cfg)
 	}
 
 	svc, err := app.New(cfg)
@@ -445,6 +456,11 @@ func newHTTPProviderStub(t *testing.T, scenario string) (*httptest.Server, *prov
 	capture := &providerCapture{}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capture.record(r)
+
+		if r.URL.Path == "/v1/models" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 
 		switch scenario {
 		case "openai_text":

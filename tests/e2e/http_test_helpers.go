@@ -372,10 +372,18 @@ func startCustomHTTPTestEnv(t *testing.T, cfg config.Config) httpTestEnv {
 	}
 
 	publicSrv := newHTTPServer(t, svc.Handler())
+	token := ""
+	for _, key := range cfg.Auth.ClientKeys {
+		if key.Active && key.Secret != "" {
+			token = key.Secret
+			break
+		}
+	}
 
 	return httpTestEnv{
 		BaseURL: publicSrv.URL,
 		Client:  publicSrv.Client(),
+		Token:   token,
 		Service: svc,
 		closeFn: func() {
 			publicSrv.Close()
@@ -462,53 +470,140 @@ func newHTTPProviderStub(t *testing.T, scenario string) (*httptest.Server, *prov
 			return
 		}
 
-		switch scenario {
-		case "openai_text":
-			if r.URL.Path != "/v1/chat/completions" {
-				http.Error(w, "unexpected path", http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n")
-			_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n")
-			_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
-		case "openai_responses":
-			if r.URL.Path != "/v1/responses" {
-				http.Error(w, "unexpected path", http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hel\"}\n\n")
-			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}\n\n")
-			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\"}\n\n")
-		case "anthropic_text":
-			if r.URL.Path != "/v1/messages" {
-				http.Error(w, "unexpected path", http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"hel\"}}\n\n")
-			_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"lo\"}}\n\n")
-			_, _ = fmt.Fprint(w, "event: message_stop\ndata: {}\n\n")
-		case "rate_limit":
-			http.Error(w, `{"error":{"message":"rate limit"}}`, http.StatusTooManyRequests)
-		case "partial_stream_interrupt_after_output":
-			if r.URL.Path != "/v1/chat/completions" {
-				http.Error(w, "unexpected path", http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n")
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
-			_, _ = fmt.Fprint(w, "data: {\"broken\":\n\n")
-		default:
+		if !writeHTTPProviderScenario(w, r, scenario) {
 			http.Error(w, "unknown scenario", http.StatusInternalServerError)
 		}
 	})
 
 	return newHTTPServer(t, handler), capture
+}
+
+type mutableHTTPProviderStub struct {
+	mu          sync.RWMutex
+	scenario    string
+	probeStatus int
+	capture     *providerCapture
+	server      *httptest.Server
+}
+
+func newMutableHTTPProviderStub(t *testing.T, scenario string, probeStatus int) *mutableHTTPProviderStub {
+	t.Helper()
+
+	stub := &mutableHTTPProviderStub{
+		scenario:    scenario,
+		probeStatus: probeStatus,
+		capture:     &providerCapture{},
+	}
+	stub.server = newHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stub.capture.record(r)
+
+		if r.URL.Path == "/v1/models" {
+			w.WriteHeader(stub.ProbeStatus())
+			return
+		}
+
+		if !writeHTTPProviderScenario(w, r, stub.Scenario()) {
+			http.Error(w, "unknown scenario", http.StatusInternalServerError)
+		}
+	}))
+
+	return stub
+}
+
+func (s *mutableHTTPProviderStub) Close() {
+	if s != nil && s.server != nil {
+		s.server.Close()
+	}
+}
+
+func (s *mutableHTTPProviderStub) URL() string {
+	if s == nil || s.server == nil {
+		return ""
+	}
+	return s.server.URL
+}
+
+func (s *mutableHTTPProviderStub) Hits() int {
+	if s == nil || s.capture == nil {
+		return 0
+	}
+	return s.capture.Hits()
+}
+
+func (s *mutableHTTPProviderStub) Scenario() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.scenario
+}
+
+func (s *mutableHTTPProviderStub) SetScenario(scenario string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.scenario = scenario
+}
+
+func (s *mutableHTTPProviderStub) ProbeStatus() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.probeStatus
+}
+
+func (s *mutableHTTPProviderStub) SetProbeStatus(status int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.probeStatus = status
+}
+
+func writeHTTPProviderScenario(w http.ResponseWriter, r *http.Request, scenario string) bool {
+	switch scenario {
+	case "openai_text":
+		if r.URL.Path != "/v1/chat/completions" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return true
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		return true
+	case "openai_responses":
+		if r.URL.Path != "/v1/responses" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return true
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hel\"}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\"}\n\n")
+		return true
+	case "anthropic_text":
+		if r.URL.Path != "/v1/messages" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return true
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"hel\"}}\n\n")
+		_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"lo\"}}\n\n")
+		_, _ = fmt.Fprint(w, "event: message_stop\ndata: {}\n\n")
+		return true
+	case "rate_limit":
+		http.Error(w, `{"error":{"message":"rate limit"}}`, http.StatusTooManyRequests)
+		return true
+	case "partial_stream_interrupt_after_output":
+		if r.URL.Path != "/v1/chat/completions" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return true
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n")
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		_, _ = fmt.Fprint(w, "data: {\"broken\":\n\n")
+		return true
+	default:
+		return false
+	}
 }
 
 func newHTTPServer(t *testing.T, handler http.Handler) *httptest.Server {

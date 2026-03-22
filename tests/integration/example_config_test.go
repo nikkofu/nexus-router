@@ -7,7 +7,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/nikkofu/nexus-router/internal/app"
 	"github.com/nikkofu/nexus-router/internal/config"
 )
 
@@ -40,10 +39,21 @@ func TestExampleConfigBoots(t *testing.T) {
 		t.Fatalf("breaker.recovery_success_threshold = %d, want %d", cfg.Breaker.RecoverySuccessThreshold, 1)
 	}
 
-	srv, err := app.New(cfg)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+	t.Setenv("OPENAI_API_KEY", "openai-test-key")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
+
+	openAIProbe := newIntegrationProbeServer(t, http.StatusOK)
+	defer openAIProbe.Close()
+	anthropicProbe := newIntegrationProbeServer(t, http.StatusOK)
+	defer anthropicProbe.Close()
+
+	cfg.Providers[0].BaseURL = openAIProbe.URL
+	cfg.Providers[1].BaseURL = anthropicProbe.URL
+
+	srv := newTestService(t, cfg)
+	defer shutdownTestService(t, srv)
+
+	waitForIntegrationStatus(t, srv, "/readyz", http.StatusOK)
 
 	req := httptest.NewRequest(http.MethodGet, "/livez", nil)
 	rec := httptest.NewRecorder()

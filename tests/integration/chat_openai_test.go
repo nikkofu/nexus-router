@@ -245,6 +245,79 @@ func TestChatStreamingRelaysOpenAIChunks(t *testing.T) {
 	}
 }
 
+func TestOpenAIAdapterEncodesManagedTools(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "openai-test-key")
+
+	server, capture := newOpenAICaptureStubServer(t, "chat_stream")
+	adapter := openai.NewAdapter(server.Client())
+
+	_, err := adapter.Execute(context.Background(), config.ProviderConfig{
+		Provider:  "openai",
+		BaseURL:   server.URL,
+		APIKeyEnv: "OPENAI_API_KEY",
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindChatCompletions,
+		PublicModel:  "openai/gpt-4.1",
+		Tools: []canonical.Tool{
+			{
+				Name: "lookup_weather",
+				Schema: map[string]any{
+					"type": "object",
+				},
+			},
+		},
+		Stream: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	body := capture.Body()
+	if !strings.Contains(body, `"tools":[`) {
+		t.Fatalf("captured body missing tools array: %s", body)
+	}
+	if !strings.Contains(body, `"name":"lookup_weather"`) {
+		t.Fatalf("captured body missing tool name: %s", body)
+	}
+}
+
+func TestOpenAIAdapterEncodesNamedToolChoice(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "openai-test-key")
+
+	server, capture := newOpenAICaptureStubServer(t, "chat_stream")
+	adapter := openai.NewAdapter(server.Client())
+
+	_, err := adapter.Execute(context.Background(), config.ProviderConfig{
+		Provider:  "openai",
+		BaseURL:   server.URL,
+		APIKeyEnv: "OPENAI_API_KEY",
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindChatCompletions,
+		PublicModel:  "openai/gpt-4.1",
+		Tools: []canonical.Tool{
+			{
+				Name: "lookup_weather",
+				Schema: map[string]any{
+					"type": "object",
+				},
+			},
+		},
+		ToolChoice: canonical.ToolChoice{Name: "lookup_weather"},
+		Stream:     true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	body := capture.Body()
+	if !strings.Contains(body, `"tool_choice":`) {
+		t.Fatalf("captured body missing tool_choice: %s", body)
+	}
+	if !strings.Contains(body, `"name":"lookup_weather"`) {
+		t.Fatalf("captured body missing selected tool name: %s", body)
+	}
+}
+
 func TestOpenAIAdapterSendsBearerAuthFromProviderAPIKeyEnv(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "openai-test-key")
 

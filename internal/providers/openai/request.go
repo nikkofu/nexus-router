@@ -44,6 +44,17 @@ func EncodeRequest(req canonical.Request) ([]byte, error) {
 		if len(req.Generation.Stop) > 0 {
 			payload["stop"] = req.Generation.Stop
 		}
+		if len(req.Tools) > 0 {
+			payload["tools"] = encodeChatTools(req.Tools)
+		}
+		if req.ToolChoice.Name != "" {
+			payload["tool_choice"] = map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name": req.ToolChoice.Name,
+				},
+			}
+		}
 		return marshal(payload)
 	}
 }
@@ -111,4 +122,19 @@ func encodeResponsesInput(conversation []canonical.Turn) []any {
 	}
 
 	return input
+}
+
+func encodeChatTools(tools []canonical.Tool) []any {
+	payload := make([]any, 0, len(tools))
+	for _, tool := range tools {
+		payload = append(payload, map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":       tool.Name,
+				"parameters": tool.Schema,
+			},
+		})
+	}
+
+	return payload
 }

@@ -64,6 +64,12 @@ func EncodeRequest(req canonical.Request) ([]byte, error) {
 	if len(tools) > 0 {
 		payload["tools"] = tools
 	}
+	if req.ToolChoice.Name != "" {
+		payload["tool_choice"] = map[string]any{
+			"type": "tool",
+			"name": req.ToolChoice.Name,
+		}
+	}
 
 	return json.Marshal(payload)
 }

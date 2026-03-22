@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -116,6 +117,51 @@ func TestAnthropicResponsesRouteNormalizesOutput(t *testing.T) {
 
 	if !strings.Contains(rec.Body.String(), "response.output_text.delta") {
 		t.Fatalf("expected response event in body, got %q", rec.Body.String())
+	}
+}
+
+func TestAnthropicRouteEncodesNamedToolChoice(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
+
+	server, capture := newAnthropicStubServer(t, "messages_stream")
+	adapter := anthropic.NewAdapter(server.Client())
+
+	_, err := adapter.Execute(context.Background(), config.ProviderConfig{
+		Provider:  "anthropic",
+		BaseURL:   server.URL,
+		APIKeyEnv: "ANTHROPIC_API_KEY",
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindChatCompletions,
+		PublicModel:  "anthropic/claude-sonnet-4-5",
+		Tools: []canonical.Tool{
+			{
+				Name: "lookup_weather",
+				Schema: map[string]any{
+					"type": "object",
+				},
+			},
+		},
+		ToolChoice: canonical.ToolChoice{Name: "lookup_weather"},
+		Stream:     true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(capture.Body()), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	rawChoice, ok := payload["tool_choice"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool_choice = %#v, want object", payload["tool_choice"])
+	}
+	if rawChoice["type"] != "tool" {
+		t.Fatalf("tool_choice.type = %#v, want %q", rawChoice["type"], "tool")
+	}
+	if rawChoice["name"] != "lookup_weather" {
+		t.Fatalf("tool_choice.name = %#v, want %q", rawChoice["name"], "lookup_weather")
 	}
 }
 

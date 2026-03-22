@@ -13,6 +13,7 @@ func NewRouter(cfg config.Config, resolver auth.Resolver, exec handlers.ExecuteS
 
 	mux.Handle("/livez", handlers.Livez())
 	mux.Handle("/readyz", handlers.Readyz(cfg, runtime))
+	mux.Handle("/admin/config", handlers.AdminConfig(cfg))
 	mux.Handle("/admin/routes", handlers.AdminRoutes(cfg))
 	mux.Handle("/admin/upstreams", handlers.AdminUpstreams(runtime))
 	mux.Handle("/v1/chat/completions", RequireBearer(resolver, handlers.ChatCompletions(exec, ClientPolicyFromContext)))

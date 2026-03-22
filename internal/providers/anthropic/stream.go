@@ -138,12 +138,14 @@ func DecodeStream(kind canonical.EndpointKind, r io.Reader) ([]canonical.Event, 
 					})
 				}
 			case "message_stop":
-				var data map[string]any
 				if currentStopReason != "" {
-					data = map[string]any{"stop_reason": currentStopReason}
+					events = append(events, canonical.Event{
+						Type: canonical.EventMessageStop,
+						Data: map[string]any{"stop_reason": currentStopReason},
+					})
+					currentStopReason = ""
 				}
-				events = append(events, canonical.Event{Type: canonical.EventMessageStop, Data: data})
-				currentStopReason = ""
+				events = append(events, canonical.Event{Type: canonical.EventMessageStop})
 			}
 		}
 	}

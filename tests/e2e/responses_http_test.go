@@ -75,3 +75,41 @@ func TestResponsesHTTPNonStreamingAnthropicForcesEventModeAndIncludesUsage(t *te
 	assertBodyContains(t, body, "\"text\":\"hello\"", "\"input_tokens\":11", "\"output_tokens\":7", "\"total_tokens\":18")
 	assertBodyContains(t, env.Primary.Body(), "\"stream\":true")
 }
+
+func TestResponsesHTTPRejectsToolsOnPublicSurface(t *testing.T) {
+	env := startHTTPTestEnv(t, "openai_responses")
+	defer env.Close()
+
+	resp := postJSON(t, env.Client, env.BaseURL+"/v1/responses", env.Token, map[string]any{
+		"model":  "openai/gpt-4.1",
+		"stream": true,
+		"input": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{
+						"type": "input_text",
+						"text": "weather?",
+					},
+				},
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "lookup_weather",
+				"parameters": map[string]any{
+					"type": "object",
+				},
+			},
+		},
+	})
+	assertStatus(t, resp, 400)
+
+	body := readBody(t, resp)
+	assertJSONErrorType(t, body, "unsupported_capability")
+
+	if env.Primary.Hits() != 0 {
+		t.Fatalf("primary hits = %d, want 0", env.Primary.Hits())
+	}
+}

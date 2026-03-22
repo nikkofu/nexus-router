@@ -244,6 +244,18 @@ func startHTTPTestEnvWithConfigMutator(t *testing.T, scenario string, mutate fun
 			Name:    "anthropic-family",
 			Primary: "anthropic-main",
 		}
+	case "anthropic_tool_use":
+		publicModel = "anthropic/claude-sonnet-4-5"
+		primarySrv, primaryCap = newHTTPProviderStub(t, "anthropic_tool_use")
+		providers = []config.ProviderConfig{{
+			Name:     "anthropic-main",
+			Provider: "anthropic",
+			BaseURL:  primarySrv.URL,
+		}}
+		routeGroup = config.RouteGroupConfig{
+			Name:    "anthropic-family",
+			Primary: "anthropic-main",
+		}
 	case "primary_429_backup_success":
 		publicModel = "openai/gpt-4.1"
 		primarySrv, primaryCap = newHTTPProviderStub(t, "rate_limit")
@@ -708,6 +720,17 @@ func writeHTTPProviderScenario(w http.ResponseWriter, r *http.Request, scenario 
 		_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"hel\"}}\n\n")
 		_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"lo\"}}\n\n")
 		_, _ = fmt.Fprint(w, "event: message_delta\ndata: {\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n")
+		_, _ = fmt.Fprint(w, "event: message_stop\ndata: {}\n\n")
+		return true
+	case "anthropic_tool_use":
+		if r.URL.Path != "/v1/messages" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return true
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: content_block_start\ndata: {\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup_weather\"}}\n\n")
+		_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"partial_json\":\"{\\\"city\\\":\\\"Shanghai\\\"}\"}}\n\n")
+		_, _ = fmt.Fprint(w, "event: message_delta\ndata: {\"delta\":{\"stop_reason\":\"tool_use\"}}\n\n")
 		_, _ = fmt.Fprint(w, "event: message_stop\ndata: {}\n\n")
 		return true
 	case "rate_limit":

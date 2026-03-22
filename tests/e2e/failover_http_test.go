@@ -38,21 +38,6 @@ func TestChatHTTPDoesNotFailOverAfterOutputCommit(t *testing.T) {
 	}
 }
 
-func TestChatHTTPRejectsToolsOnPublicTextPath(t *testing.T) {
-	env := startHTTPTestEnv(t, "openai_text")
-	defer env.Close()
-
-	resp := postJSON(t, env.Client, env.BaseURL+"/v1/chat/completions", env.Token, chatToolsRequest())
-	assertStatus(t, resp, 400)
-
-	body := readBody(t, resp)
-	assertJSONErrorType(t, body, "unsupported_capability")
-
-	if env.Primary.Hits() != 0 {
-		t.Fatalf("primary hits = %d, want 0", env.Primary.Hits())
-	}
-}
-
 func TestResponsesHTTPRejectsVisionOnPublicTextPath(t *testing.T) {
 	env := startHTTPTestEnv(t, "openai_responses")
 	defer env.Close()

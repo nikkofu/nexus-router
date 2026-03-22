@@ -140,3 +140,45 @@ func TestChatCompletionsHTTPNonStreamingAnthropicForcesEventModeAndIncludesUsage
 	assertBodyContains(t, body, "\"content\":\"hello\"", "\"prompt_tokens\":11", "\"completion_tokens\":7", "\"total_tokens\":18")
 	assertBodyContains(t, env.Primary.Body(), "\"stream\":true")
 }
+
+func TestChatCompletionsHTTPStreamingAnthropicTools(t *testing.T) {
+	env := startHTTPTestEnv(t, "anthropic_tool_use")
+	defer env.Close()
+
+	resp := postJSON(t, env.Client, env.BaseURL+"/v1/chat/completions", env.Token, map[string]any{
+		"model":  "anthropic/claude-sonnet-4-5",
+		"stream": true,
+		"messages": []map[string]any{
+			{
+				"role":    "user",
+				"content": "weather in shanghai",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"function": map[string]any{
+					"name": "lookup_weather",
+					"parameters": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"city": map[string]any{"type": "string"},
+						},
+					},
+				},
+			},
+		},
+		"tool_choice": map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name": "lookup_weather",
+			},
+		},
+	})
+	assertStatus(t, resp, 200)
+	assertHeaderContains(t, resp, "Content-Type", "text/event-stream")
+
+	body := readBody(t, resp)
+	assertBodyContains(t, body, "\"tool_calls\"", "\"lookup_weather\"", "[DONE]")
+	assertBodyContains(t, env.Primary.Body(), "\"tools\":[", "\"tool_choice\":", "\"name\":\"lookup_weather\"")
+}

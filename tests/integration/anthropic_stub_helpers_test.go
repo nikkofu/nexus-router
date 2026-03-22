@@ -11,14 +11,18 @@ import (
 )
 
 type anthropicCapture struct {
-	mu   sync.RWMutex
-	body string
+	mu      sync.RWMutex
+	hits    int
+	body    string
+	headers http.Header
 }
 
-func (c *anthropicCapture) setBody(body string) {
+func (c *anthropicCapture) record(r *http.Request, body string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.hits++
 	c.body = body
+	c.headers = r.Header.Clone()
 }
 
 func (c *anthropicCapture) Body() string {
@@ -27,13 +31,28 @@ func (c *anthropicCapture) Body() string {
 	return c.body
 }
 
+func (c *anthropicCapture) Hits() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.hits
+}
+
+func (c *anthropicCapture) Header(key string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.headers == nil {
+		return ""
+	}
+	return c.headers.Get(key)
+}
+
 func newAnthropicStubServer(t *testing.T, scenario string) (*httptest.Server, *anthropicCapture) {
 	t.Helper()
 
 	capture := &anthropicCapture{}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		payload, _ := io.ReadAll(r.Body)
-		capture.setBody(string(payload))
+		capture.record(r, string(payload))
 
 		switch scenario {
 		case "messages_stream":

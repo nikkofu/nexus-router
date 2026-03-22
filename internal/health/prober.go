@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/nikkofu/nexus-router/internal/config"
+	"github.com/nikkofu/nexus-router/internal/providers"
 )
 
 type ProberOptions struct {
@@ -213,7 +213,10 @@ func buildProbeTarget(provider config.ProviderConfig, defaultInterval, defaultTi
 		headers.Set(key, value)
 	}
 
-	failFastError := mergeProviderDefaultHeaders(headers, provider)
+	failFastError := ""
+	if err := providers.MergeProviderAuthHeaders(headers, provider); err != nil {
+		failFastError = err.Error()
+	}
 
 	return probeTarget{
 		name:          provider.Name,
@@ -234,41 +237,4 @@ func defaultProbePath(provider string) string {
 	default:
 		return "/"
 	}
-}
-
-func mergeProviderDefaultHeaders(headers http.Header, provider config.ProviderConfig) string {
-	apiKey, missingKey := lookupAPIKey(provider.APIKeyEnv)
-
-	switch provider.Provider {
-	case "openai":
-		if missingKey != "" {
-			return missingKey
-		}
-		if apiKey != "" {
-			headers.Set("Authorization", "Bearer "+apiKey)
-		}
-	case "anthropic":
-		headers.Set("anthropic-version", "2023-06-01")
-		if missingKey != "" {
-			return missingKey
-		}
-		if apiKey != "" {
-			headers.Set("x-api-key", apiKey)
-		}
-	}
-
-	return ""
-}
-
-func lookupAPIKey(envVar string) (string, string) {
-	if envVar == "" {
-		return "", "missing probe api_key_env config"
-	}
-
-	value, ok := os.LookupEnv(envVar)
-	if !ok || strings.TrimSpace(value) == "" {
-		return "", fmt.Sprintf("missing probe API key env %s", envVar)
-	}
-
-	return value, ""
 }

@@ -118,3 +118,51 @@ func TestAnthropicResponsesRouteNormalizesOutput(t *testing.T) {
 		t.Fatalf("expected response event in body, got %q", rec.Body.String())
 	}
 }
+
+func TestAnthropicAdapterSendsProviderAuthHeaders(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
+
+	server, capture := newAnthropicStubServer(t, "messages_stream")
+	adapter := anthropic.NewAdapter(server.Client())
+
+	_, err := adapter.Execute(context.Background(), config.ProviderConfig{
+		Provider:  "anthropic",
+		BaseURL:   server.URL,
+		APIKeyEnv: "ANTHROPIC_API_KEY",
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindChatCompletions,
+		PublicModel:  "anthropic/claude-sonnet-4-5",
+		Stream:       true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if got := capture.Header("x-api-key"); got != "anthropic-test-key" {
+		t.Fatalf("x-api-key = %q, want %q", got, "anthropic-test-key")
+	}
+	if got := capture.Header("anthropic-version"); got != "2023-06-01" {
+		t.Fatalf("anthropic-version = %q, want %q", got, "2023-06-01")
+	}
+}
+
+func TestAnthropicAdapterFailsFastWithoutConfiguredEnvValue(t *testing.T) {
+	server, capture := newAnthropicStubServer(t, "messages_stream")
+	adapter := anthropic.NewAdapter(server.Client())
+
+	_, err := adapter.Execute(context.Background(), config.ProviderConfig{
+		Provider:  "anthropic",
+		BaseURL:   server.URL,
+		APIKeyEnv: "ANTHROPIC_API_KEY",
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindChatCompletions,
+		PublicModel:  "anthropic/claude-sonnet-4-5",
+		Stream:       true,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := capture.Hits(); got != 0 {
+		t.Fatalf("upstream hits = %d, want 0", got)
+	}
+}

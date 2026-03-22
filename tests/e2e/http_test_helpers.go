@@ -75,10 +75,11 @@ func newTestResolver(keys ...config.ClientKeyConfig) auth.Resolver {
 }
 
 type providerCapture struct {
-	mu   sync.RWMutex
-	hits int
-	path string
-	body string
+	mu      sync.RWMutex
+	hits    int
+	path    string
+	body    string
+	headers http.Header
 }
 
 func (c *providerCapture) record(r *http.Request) {
@@ -92,6 +93,7 @@ func (c *providerCapture) record(r *http.Request) {
 	c.hits++
 	c.path = r.URL.Path
 	c.body = string(body)
+	c.headers = r.Header.Clone()
 }
 
 func (c *providerCapture) Hits() int {
@@ -110,6 +112,15 @@ func (c *providerCapture) Body() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.body
+}
+
+func (c *providerCapture) Header(key string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.headers == nil {
+		return ""
+	}
+	return c.headers.Get(key)
 }
 
 type httpTestEnv struct {
@@ -277,6 +288,10 @@ func startHTTPTestEnvWithConfigMutator(t *testing.T, scenario string, mutate fun
 		}
 	default:
 		t.Fatalf("unknown HTTP test scenario %q", scenario)
+	}
+
+	for i := range providers {
+		applyTestProviderAuthEnv(t, &providers[i])
 	}
 
 	cfg := config.Config{
@@ -524,6 +539,23 @@ func newHTTPProviderStub(t *testing.T, scenario string) (*httptest.Server, *prov
 	})
 
 	return newHTTPServer(t, handler), capture
+}
+
+func applyTestProviderAuthEnv(t *testing.T, provider *config.ProviderConfig) {
+	t.Helper()
+
+	switch provider.Provider {
+	case "openai":
+		if provider.APIKeyEnv == "" {
+			provider.APIKeyEnv = "OPENAI_API_KEY"
+		}
+		t.Setenv(provider.APIKeyEnv, "openai-test-key")
+	case "anthropic":
+		if provider.APIKeyEnv == "" {
+			provider.APIKeyEnv = "ANTHROPIC_API_KEY"
+		}
+		t.Setenv(provider.APIKeyEnv, "anthropic-test-key")
+	}
 }
 
 type mutableHTTPProviderStub struct {

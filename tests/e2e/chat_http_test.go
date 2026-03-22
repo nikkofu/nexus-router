@@ -21,6 +21,18 @@ func TestChatCompletionsHTTPStreamingOpenAI(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsHTTPStreamingOpenAISendsProviderAuthHeader(t *testing.T) {
+	env := startHTTPTestEnv(t, "openai_text")
+	defer env.Close()
+
+	resp := postJSON(t, env.Client, env.BaseURL+"/v1/chat/completions", env.Token, chatTextRequest("openai/gpt-4.1", true))
+	assertStatus(t, resp, 200)
+
+	if got := env.Primary.Header("Authorization"); got != "Bearer openai-test-key" {
+		t.Fatalf("authorization = %q, want %q", got, "Bearer openai-test-key")
+	}
+}
+
 func TestChatCompletionsHTTPStreamingOpenAIPreservesFinishReasonAndSingleDone(t *testing.T) {
 	env := startHTTPTestEnv(t, "openai_text_length")
 	defer env.Close()
@@ -86,6 +98,21 @@ func TestChatCompletionsHTTPStreamingAnthropic(t *testing.T) {
 
 	if env.Primary.Hits() != 1 {
 		t.Fatalf("primary hits = %d, want 1", env.Primary.Hits())
+	}
+}
+
+func TestChatCompletionsHTTPStreamingAnthropicSendsProviderAuthHeaders(t *testing.T) {
+	env := startHTTPTestEnv(t, "anthropic_text")
+	defer env.Close()
+
+	resp := postJSON(t, env.Client, env.BaseURL+"/v1/chat/completions", env.Token, chatTextRequest("anthropic/claude-sonnet-4-5", true))
+	assertStatus(t, resp, 200)
+
+	if got := env.Primary.Header("x-api-key"); got != "anthropic-test-key" {
+		t.Fatalf("x-api-key = %q, want %q", got, "anthropic-test-key")
+	}
+	if got := env.Primary.Header("anthropic-version"); got != "2023-06-01" {
+		t.Fatalf("anthropic-version = %q, want %q", got, "2023-06-01")
 	}
 }
 

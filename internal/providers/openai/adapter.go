@@ -48,6 +48,19 @@ func (a *Adapter) Execute(ctx context.Context, upstream config.ProviderConfig, r
 		return providers.Result{}, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	authHeaders, err := providers.ProviderAuthHeaders(upstream)
+	if err != nil {
+		return providers.Result{}, &providers.ExecutionError{
+			Err:             err,
+			Retryable:       false,
+			OutputCommitted: false,
+		}
+	}
+	for key, values := range authHeaders {
+		for _, value := range values {
+			httpReq.Header.Add(key, value)
+		}
+	}
 
 	resp, err := a.client.Do(httpReq)
 	if err != nil {

@@ -32,15 +32,18 @@ func TestRuntimeRegistryResolvesProviderByUpstreamName(t *testing.T) {
 }
 
 func TestRuntimeExecutorDispatchesOpenAIAdapterForOpenAIProvider(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "openai-test-key")
+
 	server, capture := newProviderDispatchStubServer(t)
 	defer server.Close()
 
 	executor := runtime.NewExecutor(
 		runtime.NewRegistry([]config.ProviderConfig{
 			{
-				Name:     "openai-main",
-				Provider: "openai",
-				BaseURL:  server.URL,
+				Name:      "openai-main",
+				Provider:  "openai",
+				BaseURL:   server.URL,
+				APIKeyEnv: "OPENAI_API_KEY",
 			},
 		}),
 		server.Client(),
@@ -65,15 +68,18 @@ func TestRuntimeExecutorDispatchesOpenAIAdapterForOpenAIProvider(t *testing.T) {
 }
 
 func TestRuntimeExecutorDispatchesAnthropicAdapterForAnthropicProvider(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
+
 	server, capture := newProviderDispatchStubServer(t)
 	defer server.Close()
 
 	executor := runtime.NewExecutor(
 		runtime.NewRegistry([]config.ProviderConfig{
 			{
-				Name:     "anthropic-main",
-				Provider: "anthropic",
-				BaseURL:  server.URL,
+				Name:      "anthropic-main",
+				Provider:  "anthropic",
+				BaseURL:   server.URL,
+				APIKeyEnv: "ANTHROPIC_API_KEY",
 			},
 		}),
 		server.Client(),

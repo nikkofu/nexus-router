@@ -98,3 +98,47 @@ func TestChatStreamingRelaysOpenAIChunks(t *testing.T) {
 		t.Fatalf("expected chat chunk in body, got %q", body)
 	}
 }
+
+func TestOpenAIAdapterSendsBearerAuthFromProviderAPIKeyEnv(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "openai-test-key")
+
+	server, capture := newOpenAICaptureStubServer(t, "chat_stream")
+	adapter := openai.NewAdapter(server.Client())
+
+	_, err := adapter.Execute(context.Background(), config.ProviderConfig{
+		Provider:  "openai",
+		BaseURL:   server.URL,
+		APIKeyEnv: "OPENAI_API_KEY",
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindChatCompletions,
+		PublicModel:  "openai/gpt-4.1",
+		Stream:       true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if got := capture.Header("Authorization"); got != "Bearer openai-test-key" {
+		t.Fatalf("authorization = %q, want %q", got, "Bearer openai-test-key")
+	}
+}
+
+func TestOpenAIAdapterFailsFastWithoutAPIKeyEnv(t *testing.T) {
+	server, capture := newOpenAICaptureStubServer(t, "chat_stream")
+	adapter := openai.NewAdapter(server.Client())
+
+	_, err := adapter.Execute(context.Background(), config.ProviderConfig{
+		Provider: "openai",
+		BaseURL:  server.URL,
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindChatCompletions,
+		PublicModel:  "openai/gpt-4.1",
+		Stream:       true,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := capture.Hits(); got != 0 {
+		t.Fatalf("upstream hits = %d, want 0", got)
+	}
+}

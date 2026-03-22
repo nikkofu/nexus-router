@@ -2,16 +2,66 @@ package integration
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 )
+
+type openAICapture struct {
+	mu      sync.RWMutex
+	hits    int
+	body    string
+	headers http.Header
+}
+
+func (c *openAICapture) record(r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.hits++
+	c.body = string(body)
+	c.headers = r.Header.Clone()
+}
+
+func (c *openAICapture) Hits() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.hits
+}
+
+func (c *openAICapture) Body() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.body
+}
+
+func (c *openAICapture) Header(key string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.headers == nil {
+		return ""
+	}
+	return c.headers.Get(key)
+}
 
 func newOpenAIStubServer(t *testing.T, scenario string) *httptest.Server {
 	t.Helper()
 
+	server, _ := newOpenAICaptureStubServer(t, scenario)
+	return server
+}
+
+func newOpenAICaptureStubServer(t *testing.T, scenario string) (*httptest.Server, *openAICapture) {
+	t.Helper()
+
+	capture := &openAICapture{}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capture.record(r)
+
 		switch scenario {
 		case "chat_stream":
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -39,5 +89,5 @@ func newOpenAIStubServer(t *testing.T, scenario string) *httptest.Server {
 	}
 	server.Start()
 
-	return server
+	return server, capture
 }

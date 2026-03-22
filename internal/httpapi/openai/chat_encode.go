@@ -11,18 +11,19 @@ import (
 func DecodeChatCompletionRequest(r io.Reader) (canonical.Request, error) {
 	var req ChatCompletionRequest
 	if err := json.NewDecoder(r).Decode(&req); err != nil {
-		return canonical.Request{}, err
+		return canonical.Request{}, invalidRequestError("malformed request body: %v", err)
 	}
 
 	conversation := make([]canonical.Turn, 0, len(req.Messages))
 	for _, msg := range req.Messages {
-		blocks, err := normalizeChatContent(msg.Content)
+		role := normalizeRole(msg.Role)
+		blocks, err := normalizeChatContent(msg.Content, role)
 		if err != nil {
 			return canonical.Request{}, err
 		}
 
 		conversation = append(conversation, canonical.Turn{
-			Role:    normalizeRole(msg.Role),
+			Role:    role,
 			Content: blocks,
 		})
 	}
@@ -70,7 +71,7 @@ func DecodeChatCompletionRequest(r io.Reader) (canonical.Request, error) {
 	}, nil
 }
 
-func normalizeChatContent(raw json.RawMessage) ([]canonical.ContentBlock, error) {
+func normalizeChatContent(raw json.RawMessage, role canonical.Role) ([]canonical.ContentBlock, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -85,7 +86,7 @@ func normalizeChatContent(raw json.RawMessage) ([]canonical.ContentBlock, error)
 
 	var items []map[string]any
 	if err := json.Unmarshal(raw, &items); err != nil {
-		return nil, err
+		return nil, invalidRequestError("messages.content must be a string or array of content objects")
 	}
 
 	blocks := make([]canonical.ContentBlock, 0, len(items))
@@ -97,10 +98,18 @@ func normalizeChatContent(raw json.RawMessage) ([]canonical.ContentBlock, error)
 				Text: fmt.Sprint(item["text"]),
 			})
 		case "image_url":
-			imageURL := fmt.Sprint(item["image_url"])
-			if imageValue, ok := item["image_url"].(map[string]any); ok {
-				imageURL = fmt.Sprint(imageValue["url"])
+			if err := validatePublicImageRole(role); err != nil {
+				return nil, err
 			}
+
+			imageURL, err := normalizeChatImageURL(item)
+			if err != nil {
+				return nil, err
+			}
+			if err := validatePublicImageURL(imageURL); err != nil {
+				return nil, err
+			}
+
 			blocks = append(blocks, canonical.ContentBlock{
 				Type: canonical.ContentTypeImage,
 				Image: &canonical.ImageInput{
@@ -111,6 +120,40 @@ func normalizeChatContent(raw json.RawMessage) ([]canonical.ContentBlock, error)
 	}
 
 	return blocks, nil
+}
+
+func normalizeChatImageURL(item map[string]any) (string, error) {
+	if _, hasFileID := item["file_id"]; hasFileID {
+		return "", unsupportedCapabilityError("image file_id form is not supported")
+	}
+
+	imageValue, ok := item["image_url"]
+	if !ok {
+		return "", invalidRequestError("image_url.url is required")
+	}
+
+	switch value := imageValue.(type) {
+	case string:
+		return value, nil
+	case map[string]any:
+		if _, hasFileID := value["file_id"]; hasFileID {
+			return "", unsupportedCapabilityError("image file_id form is not supported")
+		}
+
+		rawURL, ok := value["url"]
+		if !ok {
+			return "", invalidRequestError("image_url.url is required")
+		}
+
+		imageURL, ok := rawURL.(string)
+		if !ok {
+			return "", invalidRequestError("image_url.url must be a string")
+		}
+
+		return imageURL, nil
+	default:
+		return "", invalidRequestError("image_url must be a string or object with a url field")
+	}
 }
 
 func normalizeRole(role string) canonical.Role {

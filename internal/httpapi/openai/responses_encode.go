@@ -9,13 +9,24 @@ import (
 )
 
 func DecodeResponsesRequest(r io.Reader) (canonical.Request, error) {
-	var req ResponsesRequest
+	var req struct {
+		Model           string              `json:"model"`
+		Input           []responsesInput    `json:"input"`
+		Stream          bool                `json:"stream"`
+		Text            *ResponsesTextBlock `json:"text,omitempty"`
+		Tools           []ResponsesTool     `json:"tools,omitempty"`
+		Temperature     *float64            `json:"temperature,omitempty"`
+		TopP            *float64            `json:"top_p,omitempty"`
+		MaxOutputTokens *int                `json:"max_output_tokens,omitempty"`
+		Metadata        map[string]string   `json:"metadata,omitempty"`
+	}
 	if err := json.NewDecoder(r).Decode(&req); err != nil {
-		return canonical.Request{}, err
+		return canonical.Request{}, invalidRequestError("malformed request body: %v", err)
 	}
 
 	conversation := make([]canonical.Turn, 0, len(req.Input))
 	for _, item := range req.Input {
+		role := normalizeRole(item.Role)
 		blocks := make([]canonical.ContentBlock, 0, len(item.Content))
 		for _, content := range item.Content {
 			switch content.Type {
@@ -25,17 +36,29 @@ func DecodeResponsesRequest(r io.Reader) (canonical.Request, error) {
 					Text: content.Text,
 				})
 			case "input_image":
+				if err := validatePublicImageRole(role); err != nil {
+					return canonical.Request{}, err
+				}
+
+				imageURL, err := normalizeResponsesImageURL(content.Raw)
+				if err != nil {
+					return canonical.Request{}, err
+				}
+				if err := validatePublicImageURL(imageURL); err != nil {
+					return canonical.Request{}, err
+				}
+
 				blocks = append(blocks, canonical.ContentBlock{
 					Type: canonical.ContentTypeImage,
 					Image: &canonical.ImageInput{
-						URL: content.ImageURL,
+						URL: imageURL,
 					},
 				})
 			}
 		}
 
 		conversation = append(conversation, canonical.Turn{
-			Role:    normalizeRole(item.Role),
+			Role:    role,
 			Content: blocks,
 		})
 	}
@@ -65,6 +88,53 @@ func DecodeResponsesRequest(r io.Reader) (canonical.Request, error) {
 		Stream:           req.Stream,
 		Metadata:         req.Metadata,
 	}, nil
+}
+
+type responsesInput struct {
+	Role    string                  `json:"role"`
+	Content []responsesContentInput `json:"content"`
+}
+
+type responsesContentInput struct {
+	Type string         `json:"type"`
+	Text string         `json:"text,omitempty"`
+	Raw  map[string]any `json:"-"`
+}
+
+func (r *responsesContentInput) UnmarshalJSON(data []byte) error {
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	r.Raw = raw
+	r.Type, _ = raw["type"].(string)
+	r.Text, _ = raw["text"].(string)
+
+	return nil
+}
+
+func normalizeResponsesImageURL(item map[string]any) (string, error) {
+	if _, hasFileID := item["file_id"]; hasFileID {
+		return "", unsupportedCapabilityError("input_image file_id form is not supported")
+	}
+
+	imageValue, ok := item["image_url"]
+	if !ok {
+		return "", invalidRequestError("input_image.image_url is required")
+	}
+
+	switch value := imageValue.(type) {
+	case string:
+		return value, nil
+	case map[string]any:
+		if _, hasFileID := value["file_id"]; hasFileID {
+			return "", unsupportedCapabilityError("input_image file_id form is not supported")
+		}
+		return "", invalidRequestError("input_image.image_url must be a string")
+	default:
+		return "", invalidRequestError("input_image.image_url must be a string")
+	}
 }
 
 func decodeResponsesResponseContract(text *ResponsesTextBlock) canonical.ResponseContract {

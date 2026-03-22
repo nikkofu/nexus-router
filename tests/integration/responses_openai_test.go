@@ -46,6 +46,123 @@ func TestResponsesHandlerNormalizesInputIntoCanonicalRequest(t *testing.T) {
 	}
 }
 
+func TestResponsesHandlerDecodesVisionInputItems(t *testing.T) {
+	reqBody := `{
+		"model":"openai/gpt-4.1",
+		"stream":true,
+		"input":[
+			{
+				"role":"user",
+				"content":[
+					{"type":"input_text","text":"describe"},
+					{"type":"input_image","image_url":"https://example.com/cat.png"}
+				]
+			}
+		]
+	}`
+
+	got, err := openaiapi.DecodeResponsesRequest(strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("DecodeResponsesRequest() error = %v", err)
+	}
+
+	if len(got.Conversation) != 1 {
+		t.Fatalf("conversation len = %d, want 1", len(got.Conversation))
+	}
+	if len(got.Conversation[0].Content) != 2 {
+		t.Fatalf("content len = %d, want 2", len(got.Conversation[0].Content))
+	}
+	if got.Conversation[0].Content[0].Type != canonical.ContentTypeText {
+		t.Fatalf("first block type = %q, want text", got.Conversation[0].Content[0].Type)
+	}
+	if got.Conversation[0].Content[1].Type != canonical.ContentTypeImage {
+		t.Fatalf("second block type = %q, want image", got.Conversation[0].Content[1].Type)
+	}
+	if got.Conversation[0].Content[1].Image == nil {
+		t.Fatal("second block image = nil, want non-nil image payload")
+	}
+	if got.Conversation[0].Content[1].Image.URL != "https://example.com/cat.png" {
+		t.Fatalf("image url = %q, want %q", got.Conversation[0].Content[1].Image.URL, "https://example.com/cat.png")
+	}
+}
+
+func TestResponsesHandlerRejectsUnsupportedPublicImageForms(t *testing.T) {
+	cases := []struct {
+		name          string
+		payload       string
+		wantSemantics string
+	}{
+		{
+			name: "malformed image item shape",
+			payload: `{
+				"model":"openai/gpt-4.1",
+				"input":[{"role":"user","content":[{"type":"input_image","image_url":{"url":"https://example.com/cat.png"}}]}]
+			}`,
+			wantSemantics: "invalid_request",
+		},
+		{
+			name: "missing image url",
+			payload: `{
+				"model":"openai/gpt-4.1",
+				"input":[{"role":"user","content":[{"type":"input_image"}]}]
+			}`,
+			wantSemantics: "invalid_request",
+		},
+		{
+			name: "empty image url",
+			payload: `{
+				"model":"openai/gpt-4.1",
+				"input":[{"role":"user","content":[{"type":"input_image","image_url":""}]}]
+			}`,
+			wantSemantics: "invalid_request",
+		},
+		{
+			name: "non-user image role",
+			payload: `{
+				"model":"openai/gpt-4.1",
+				"input":[{"role":"assistant","content":[{"type":"input_image","image_url":"https://example.com/cat.png"}]}]
+			}`,
+			wantSemantics: "invalid_request",
+		},
+		{
+			name: "non-http image url scheme",
+			payload: `{
+				"model":"openai/gpt-4.1",
+				"input":[{"role":"user","content":[{"type":"input_image","image_url":"ftp://example.com/cat.png"}]}]
+			}`,
+			wantSemantics: "invalid_request",
+		},
+		{
+			name: "data url image",
+			payload: `{
+				"model":"openai/gpt-4.1",
+				"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}]
+			}`,
+			wantSemantics: "unsupported_capability",
+		},
+		{
+			name: "file id image form",
+			payload: `{
+				"model":"openai/gpt-4.1",
+				"input":[{"role":"user","content":[{"type":"input_image","file_id":"file_abc123"}]}]
+			}`,
+			wantSemantics: "unsupported_capability",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := openaiapi.DecodeResponsesRequest(strings.NewReader(tc.payload))
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.wantSemantics) {
+				t.Fatalf("error = %q, want %q semantics", err.Error(), tc.wantSemantics)
+			}
+		})
+	}
+}
+
 func TestResponsesStreamingRelaysOpenAIEvents(t *testing.T) {
 	server := newOpenAIStubServer(t, "responses_stream")
 	adapter := openai.NewAdapter(server.Client())

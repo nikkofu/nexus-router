@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/nikkofu/nexus-router/internal/config"
+	"github.com/nikkofu/nexus-router/internal/health"
 )
 
 func TestReadyzReturns503WhileInitialProbePending(t *testing.T) {
@@ -45,6 +46,10 @@ func TestReadyzReturns503WhileInitialProbePending(t *testing.T) {
 		},
 	})
 	defer env.Close()
+
+	waitForRuntimeSnapshot(t, env.Client, env.BaseURL, func(snapshot health.RuntimeSnapshot) bool {
+		return snapshot.Started && !snapshot.InitialProbeComplete
+	})
 
 	resp := get(t, env.Client, env.BaseURL+"/readyz")
 	assertStatus(t, resp, 503)

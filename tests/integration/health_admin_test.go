@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
 	"time"
 
@@ -77,7 +78,23 @@ func TestReadyzReturns503WhenARequiredRouteGroupHasNoEligibleUpstream(t *testing
 	srv := newTestService(t, cfg)
 	defer shutdownTestService(t, srv)
 
-	waitForIntegrationStatus(t, srv, "/admin/upstreams", http.StatusOK)
+	waitForIntegrationRuntimeSnapshot(t, srv, func(snapshot health.RuntimeSnapshot) bool {
+		if !snapshot.Started || !snapshot.InitialProbeComplete {
+			return false
+		}
+
+		openAI, ok := integrationUpstreamByName(snapshot, "openai-main")
+		if !ok || !openAI.Eligible {
+			return false
+		}
+
+		anthropic, ok := integrationUpstreamByName(snapshot, "anthropic-main")
+		if !ok {
+			return false
+		}
+
+		return !anthropic.Eligible
+	})
 
 	resp := performServiceRequest(t, srv, http.MethodGet, "/readyz", nil, "")
 	if resp.Code != http.StatusServiceUnavailable {
@@ -114,15 +131,7 @@ func TestAdminUpstreamsReturnsRuntimeSnapshotEnvelope(t *testing.T) {
 		t.Fatalf("status = %d, want %d", resp.Code, http.StatusOK)
 	}
 
-	var payload struct {
-		Started              bool                    `json:"started"`
-		InitialProbeComplete bool                    `json:"initial_probe_complete"`
-		HasEligibleUpstream  bool                    `json:"has_eligible_upstream"`
-		Upstreams            []health.UpstreamStatus `json:"upstreams"`
-	}
-	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
+	payload := decodeExactRuntimeSnapshot(t, resp.Body.Bytes())
 
 	if !payload.Started {
 		t.Fatal("started = false, want true")
@@ -243,6 +252,125 @@ func waitForIntegrationStatus(t *testing.T, srv *app.Service, path string, want 
 
 	resp := performServiceRequest(t, srv, http.MethodGet, path, nil, "")
 	t.Fatalf("status for %s = %d, want %d, body = %q", path, resp.Code, want, resp.Body.String())
+}
+
+func waitForIntegrationRuntimeSnapshot(t *testing.T, srv *app.Service, predicate func(health.RuntimeSnapshot) bool) health.RuntimeSnapshot {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		snapshot := getIntegrationRuntimeSnapshot(t, srv)
+		if predicate(snapshot) {
+			return snapshot
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	snapshot := getIntegrationRuntimeSnapshot(t, srv)
+	t.Fatalf("runtime snapshot did not satisfy predicate: %+v", snapshot)
+	return health.RuntimeSnapshot{}
+}
+
+func getIntegrationRuntimeSnapshot(t *testing.T, srv *app.Service) health.RuntimeSnapshot {
+	t.Helper()
+
+	resp := performServiceRequest(t, srv, http.MethodGet, "/admin/upstreams", nil, "")
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body = %q", resp.Code, http.StatusOK, resp.Body.String())
+	}
+
+	return decodeExactRuntimeSnapshot(t, resp.Body.Bytes())
+}
+
+func decodeExactRuntimeSnapshot(t *testing.T, body []byte) health.RuntimeSnapshot {
+	t.Helper()
+
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	assertExactJSONKeys(t, envelope, []string{
+		"started",
+		"initial_probe_complete",
+		"has_eligible_upstream",
+		"upstreams",
+	})
+
+	var upstreams []json.RawMessage
+	if err := json.Unmarshal(envelope["upstreams"], &upstreams); err != nil {
+		t.Fatalf("json.Unmarshal(upstreams) error = %v", err)
+	}
+	for _, upstream := range upstreams {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(upstream, &fields); err != nil {
+			t.Fatalf("json.Unmarshal(upstream) error = %v", err)
+		}
+		assertExactJSONKeys(t, fields, []string{
+			"name",
+			"provider",
+			"state",
+			"eligible",
+			"consecutive_failures",
+			"ejected_until",
+			"last_probe_at",
+			"last_probe_ok",
+			"last_error",
+			"breaker_state",
+			"source",
+		})
+	}
+
+	var snapshot health.RuntimeSnapshot
+	if err := json.Unmarshal(body, &snapshot); err != nil {
+		t.Fatalf("json.Unmarshal(snapshot) error = %v", err)
+	}
+
+	return snapshot
+}
+
+func assertExactJSONKeys(t *testing.T, got map[string]json.RawMessage, want []string) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("json keys = %v, want %v", sortedJSONKeys(got), want)
+	}
+
+	for _, key := range want {
+		if _, ok := got[key]; !ok {
+			t.Fatalf("missing json key %q in %v", key, sortedJSONKeys(got))
+		}
+	}
+
+	wantSet := make(map[string]struct{}, len(want))
+	for _, key := range want {
+		wantSet[key] = struct{}{}
+	}
+	for key := range got {
+		if _, ok := wantSet[key]; ok {
+			continue
+		}
+		t.Fatalf("unexpected json key %q in %v", key, sortedJSONKeys(got))
+	}
+}
+
+func sortedJSONKeys(values map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func integrationUpstreamByName(snapshot health.RuntimeSnapshot, name string) (health.UpstreamStatus, bool) {
+	for _, upstream := range snapshot.Upstreams {
+		if upstream.Name == name {
+			return upstream, true
+		}
+	}
+
+	return health.UpstreamStatus{}, false
 }
 
 func testServiceConfig() config.Config {

@@ -17,6 +17,7 @@ import (
 	"github.com/nikkofu/nexus-router/internal/app"
 	"github.com/nikkofu/nexus-router/internal/auth"
 	"github.com/nikkofu/nexus-router/internal/config"
+	"github.com/nikkofu/nexus-router/internal/health"
 )
 
 type requestCapture struct {
@@ -403,6 +404,39 @@ func waitForStatus(t *testing.T, client *http.Client, url string, want int) *htt
 	body := readBody(t, resp)
 	t.Fatalf("status = %d, want %d, body = %q", resp.StatusCode, want, body)
 	return nil
+}
+
+func getRuntimeSnapshot(t *testing.T, client *http.Client, baseURL string) health.RuntimeSnapshot {
+	t.Helper()
+
+	resp := get(t, client, baseURL+"/admin/upstreams")
+	assertStatus(t, resp, http.StatusOK)
+
+	body := readBody(t, resp)
+
+	var snapshot health.RuntimeSnapshot
+	if err := json.Unmarshal([]byte(body), &snapshot); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	return snapshot
+}
+
+func waitForRuntimeSnapshot(t *testing.T, client *http.Client, baseURL string, predicate func(health.RuntimeSnapshot) bool) health.RuntimeSnapshot {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		snapshot := getRuntimeSnapshot(t, client, baseURL)
+		if predicate(snapshot) {
+			return snapshot
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	snapshot := getRuntimeSnapshot(t, client, baseURL)
+	t.Fatalf("runtime snapshot did not satisfy predicate: %+v", snapshot)
+	return health.RuntimeSnapshot{}
 }
 
 func newHTTPProviderStub(t *testing.T, scenario string) (*httptest.Server, *providerCapture) {

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/nikkofu/nexus-router/internal/canonical"
+	"github.com/nikkofu/nexus-router/internal/usage"
 )
 
 type FinalResponse struct {
@@ -12,6 +13,7 @@ type FinalResponse struct {
 	Model  string                `json:"model"`
 	Status string                `json:"status"`
 	Output []FinalResponseOutput `json:"output"`
+	Usage  *FinalResponseUsage   `json:"usage,omitempty"`
 }
 
 type FinalResponseOutput struct {
@@ -19,10 +21,16 @@ type FinalResponseOutput struct {
 	Text string `json:"text"`
 }
 
+type FinalResponseUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+}
+
 func FinalizeResponse(events []canonical.Event, model string) FinalResponse {
 	text := aggregateResponseText(events)
 
-	return FinalResponse{
+	resp := FinalResponse{
 		ID:     newGeneratedID("resp_"),
 		Object: "response",
 		Model:  model,
@@ -34,6 +42,16 @@ func FinalizeResponse(events []canonical.Event, model string) FinalResponse {
 			},
 		},
 	}
+
+	if summary, ok := usage.FromEvents(events); ok {
+		resp.Usage = &FinalResponseUsage{
+			InputTokens:  summary.InputTokens,
+			OutputTokens: summary.OutputTokens,
+			TotalTokens:  summary.TotalTokens,
+		}
+	}
+
+	return resp
 }
 
 func aggregateResponseText(events []canonical.Event) string {

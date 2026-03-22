@@ -7,7 +7,7 @@ func EncodeRequest(req canonical.Request) ([]byte, error) {
 	case canonical.EndpointKindResponses:
 		payload := map[string]any{
 			"model":  req.PublicModel,
-			"stream": req.Stream,
+			"stream": true,
 			"input":  encodeResponsesInput(req.Conversation),
 		}
 		if req.Generation.Temperature != nil {
@@ -26,8 +26,11 @@ func EncodeRequest(req canonical.Request) ([]byte, error) {
 	default:
 		payload := map[string]any{
 			"model":    req.PublicModel,
-			"stream":   req.Stream,
+			"stream":   true,
 			"messages": encodeChatMessages(req.Conversation),
+			"stream_options": map[string]any{
+				"include_usage": true,
+			},
 		}
 		if req.Generation.Temperature != nil {
 			payload["temperature"] = *req.Generation.Temperature

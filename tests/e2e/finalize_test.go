@@ -40,6 +40,9 @@ func TestFinalizeChatCompletionAggregatesTextAndNormalizesFinishReason(t *testin
 	if choice.FinishReason != "stop" {
 		t.Fatalf("choice.finish_reason = %q, want %q", choice.FinishReason, "stop")
 	}
+	if got.Usage != nil {
+		t.Fatalf("usage = %#v, want nil", got.Usage)
+	}
 }
 
 func TestFinalizeResponseAggregatesTextAndMarksCompleted(t *testing.T) {
@@ -71,5 +74,60 @@ func TestFinalizeResponseAggregatesTextAndMarksCompleted(t *testing.T) {
 	}
 	if got.Output[0].Text != "foobar" {
 		t.Fatalf("output[0].text = %q, want %q", got.Output[0].Text, "foobar")
+	}
+	if got.Usage != nil {
+		t.Fatalf("usage = %#v, want nil", got.Usage)
+	}
+}
+
+func TestFinalizeChatCompletionIncludesUsageWhenPresent(t *testing.T) {
+	events := []canonical.Event{
+		{Type: canonical.EventContentDelta, Data: map[string]any{"text": "hello"}},
+		{Type: canonical.EventUsage, Data: map[string]any{
+			"input_tokens":  11,
+			"output_tokens": 7,
+			"total_tokens":  18,
+		}},
+	}
+
+	got := openai.FinalizeChatCompletion(events, "openai/gpt-4.1")
+
+	if got.Usage == nil {
+		t.Fatal("usage = nil, want non-nil")
+	}
+	if got.Usage.PromptTokens != 11 {
+		t.Fatalf("usage.prompt_tokens = %d, want 11", got.Usage.PromptTokens)
+	}
+	if got.Usage.CompletionTokens != 7 {
+		t.Fatalf("usage.completion_tokens = %d, want 7", got.Usage.CompletionTokens)
+	}
+	if got.Usage.TotalTokens != 18 {
+		t.Fatalf("usage.total_tokens = %d, want 18", got.Usage.TotalTokens)
+	}
+}
+
+func TestFinalizeResponseIncludesUsageWhenPresent(t *testing.T) {
+	events := []canonical.Event{
+		{Type: canonical.EventContentDelta, Data: map[string]any{"delta": "hello"}},
+		{Type: canonical.EventUsage, Data: map[string]any{
+			"input_tokens":  5,
+			"output_tokens": 3,
+			"total_tokens":  8,
+		}},
+	}
+
+	got := openai.FinalizeResponse(events, "openai/gpt-4.1")
+
+	if got.Usage == nil {
+		t.Fatal("usage = nil, want non-nil")
+	}
+	if got.Usage.InputTokens != 5 {
+		t.Fatalf("usage.input_tokens = %d, want 5", got.Usage.InputTokens)
+	}
+	if got.Usage.OutputTokens != 3 {
+		t.Fatalf("usage.output_tokens = %d, want 3", got.Usage.OutputTokens)
+	}
+	if got.Usage.TotalTokens != 8 {
+		t.Fatalf("usage.total_tokens = %d, want 8", got.Usage.TotalTokens)
 	}
 }

@@ -161,6 +161,30 @@ func startHTTPTestEnvWithConfigMutator(t *testing.T, scenario string, mutate fun
 			Name:    "openai-family",
 			Primary: "openai-main",
 		}
+	case "openai_text_usage":
+		publicModel = "openai/gpt-4.1"
+		primarySrv, primaryCap = newHTTPProviderStub(t, "openai_text_usage")
+		providers = []config.ProviderConfig{{
+			Name:     "openai-main",
+			Provider: "openai",
+			BaseURL:  primarySrv.URL,
+		}}
+		routeGroup = config.RouteGroupConfig{
+			Name:    "openai-family",
+			Primary: "openai-main",
+		}
+	case "openai_text_length":
+		publicModel = "openai/gpt-4.1"
+		primarySrv, primaryCap = newHTTPProviderStub(t, "openai_text_length")
+		providers = []config.ProviderConfig{{
+			Name:     "openai-main",
+			Provider: "openai",
+			BaseURL:  primarySrv.URL,
+		}}
+		routeGroup = config.RouteGroupConfig{
+			Name:    "openai-family",
+			Primary: "openai-main",
+		}
 	case "openai_responses":
 		publicModel = "openai/gpt-4.1"
 		primarySrv, primaryCap = newHTTPProviderStub(t, "openai_responses")
@@ -173,9 +197,33 @@ func startHTTPTestEnvWithConfigMutator(t *testing.T, scenario string, mutate fun
 			Name:    "openai-family",
 			Primary: "openai-main",
 		}
+	case "openai_responses_usage":
+		publicModel = "openai/gpt-4.1"
+		primarySrv, primaryCap = newHTTPProviderStub(t, "openai_responses_usage")
+		providers = []config.ProviderConfig{{
+			Name:     "openai-main",
+			Provider: "openai",
+			BaseURL:  primarySrv.URL,
+		}}
+		routeGroup = config.RouteGroupConfig{
+			Name:    "openai-family",
+			Primary: "openai-main",
+		}
 	case "anthropic_text":
 		publicModel = "anthropic/claude-sonnet-4-5"
 		primarySrv, primaryCap = newHTTPProviderStub(t, "anthropic_text")
+		providers = []config.ProviderConfig{{
+			Name:     "anthropic-main",
+			Provider: "anthropic",
+			BaseURL:  primarySrv.URL,
+		}}
+		routeGroup = config.RouteGroupConfig{
+			Name:    "anthropic-family",
+			Primary: "anthropic-main",
+		}
+	case "anthropic_text_usage":
+		publicModel = "anthropic/claude-sonnet-4-5"
+		primarySrv, primaryCap = newHTTPProviderStub(t, "anthropic_text_usage")
 		providers = []config.ProviderConfig{{
 			Name:     "anthropic-main",
 			Provider: "anthropic",
@@ -566,6 +614,28 @@ func writeHTTPProviderScenario(w http.ResponseWriter, r *http.Request, scenario 
 		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n")
 		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		return true
+	case "openai_text_usage":
+		if r.URL.Path != "/v1/chat/completions" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return true
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,\"total_tokens\":18}}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		return true
+	case "openai_text_length":
+		if r.URL.Path != "/v1/chat/completions" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return true
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		return true
 	case "openai_responses":
 		if r.URL.Path != "/v1/responses" {
 			http.Error(w, "unexpected path", http.StatusNotFound)
@@ -576,6 +646,16 @@ func writeHTTPProviderScenario(w http.ResponseWriter, r *http.Request, scenario 
 		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}\n\n")
 		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\"}\n\n")
 		return true
+	case "openai_responses_usage":
+		if r.URL.Path != "/v1/responses" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return true
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hel\"}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"lo\"}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":11,\"output_tokens\":7,\"total_tokens\":18}}}\n\n")
+		return true
 	case "anthropic_text":
 		if r.URL.Path != "/v1/messages" {
 			http.Error(w, "unexpected path", http.StatusNotFound)
@@ -584,6 +664,18 @@ func writeHTTPProviderScenario(w http.ResponseWriter, r *http.Request, scenario 
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"hel\"}}\n\n")
 		_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"lo\"}}\n\n")
+		_, _ = fmt.Fprint(w, "event: message_stop\ndata: {}\n\n")
+		return true
+	case "anthropic_text_usage":
+		if r.URL.Path != "/v1/messages" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return true
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "event: message_start\ndata: {\"message\":{\"usage\":{\"input_tokens\":11,\"output_tokens\":0}}}\n\n")
+		_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"hel\"}}\n\n")
+		_, _ = fmt.Fprint(w, "event: content_block_delta\ndata: {\"delta\":{\"text\":\"lo\"}}\n\n")
+		_, _ = fmt.Fprint(w, "event: message_delta\ndata: {\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n")
 		_, _ = fmt.Fprint(w, "event: message_stop\ndata: {}\n\n")
 		return true
 	case "rate_limit":

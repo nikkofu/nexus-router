@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/nikkofu/nexus-router/internal/canonical"
+	"github.com/nikkofu/nexus-router/internal/usage"
 )
 
 type StreamDecodeError struct {
@@ -32,6 +33,7 @@ func DecodeStream(kind canonical.EndpointKind, r io.Reader) ([]canonical.Event, 
 	currentEvent := ""
 	currentToolName := ""
 	currentToolID := ""
+	currentStopReason := ""
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -41,6 +43,21 @@ func DecodeStream(kind canonical.EndpointKind, r io.Reader) ([]canonical.Event, 
 		case strings.HasPrefix(line, "data: "):
 			payload := strings.TrimPrefix(line, "data: ")
 			switch currentEvent {
+			case "message_start":
+				var start struct {
+					Message struct {
+						Usage map[string]any `json:"usage"`
+					} `json:"message"`
+				}
+				if err := json.Unmarshal([]byte(payload), &start); err != nil {
+					return nil, &StreamDecodeError{Err: err, OutputCommitted: len(events) > 0}
+				}
+				if _, ok := usage.FromData(start.Message.Usage); ok {
+					events = append(events, canonical.Event{
+						Type: canonical.EventUsage,
+						Data: start.Message.Usage,
+					})
+				}
 			case "content_block_start":
 				var start struct {
 					ContentBlock struct {
@@ -101,8 +118,32 @@ func DecodeStream(kind canonical.EndpointKind, r io.Reader) ([]canonical.Event, 
 					Type: canonical.EventContentDelta,
 					Data: data,
 				})
+			case "message_delta":
+				var delta struct {
+					Delta struct {
+						StopReason string `json:"stop_reason"`
+					} `json:"delta"`
+					Usage map[string]any `json:"usage"`
+				}
+				if err := json.Unmarshal([]byte(payload), &delta); err != nil {
+					return nil, &StreamDecodeError{Err: err, OutputCommitted: len(events) > 0}
+				}
+				if delta.Delta.StopReason != "" {
+					currentStopReason = delta.Delta.StopReason
+				}
+				if _, ok := usage.FromData(delta.Usage); ok {
+					events = append(events, canonical.Event{
+						Type: canonical.EventUsage,
+						Data: delta.Usage,
+					})
+				}
 			case "message_stop":
-				events = append(events, canonical.Event{Type: canonical.EventMessageStop})
+				var data map[string]any
+				if currentStopReason != "" {
+					data = map[string]any{"stop_reason": currentStopReason}
+				}
+				events = append(events, canonical.Event{Type: canonical.EventMessageStop, Data: data})
+				currentStopReason = ""
 			}
 		}
 	}

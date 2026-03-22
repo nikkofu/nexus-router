@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/nikkofu/nexus-router/internal/canonical"
+	"github.com/nikkofu/nexus-router/internal/usage"
 )
 
 type FinalChatCompletion struct {
@@ -15,6 +16,7 @@ type FinalChatCompletion struct {
 	Object  string                      `json:"object"`
 	Model   string                      `json:"model"`
 	Choices []FinalChatCompletionChoice `json:"choices"`
+	Usage   *FinalChatCompletionUsage   `json:"usage,omitempty"`
 }
 
 type FinalChatCompletionChoice struct {
@@ -28,10 +30,16 @@ type FinalChatCompletionMessage struct {
 	Content string `json:"content"`
 }
 
+type FinalChatCompletionUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 func FinalizeChatCompletion(events []canonical.Event, model string) FinalChatCompletion {
 	text, finishReason := aggregateFinalText(events)
 
-	return FinalChatCompletion{
+	resp := FinalChatCompletion{
 		ID:     newGeneratedID("chatcmpl-"),
 		Object: "chat.completion",
 		Model:  model,
@@ -46,6 +54,16 @@ func FinalizeChatCompletion(events []canonical.Event, model string) FinalChatCom
 			},
 		},
 	}
+
+	if summary, ok := usage.FromEvents(events); ok {
+		resp.Usage = &FinalChatCompletionUsage{
+			PromptTokens:     summary.InputTokens,
+			CompletionTokens: summary.OutputTokens,
+			TotalTokens:      summary.TotalTokens,
+		}
+	}
+
+	return resp
 }
 
 func aggregateFinalText(events []canonical.Event) (string, string) {

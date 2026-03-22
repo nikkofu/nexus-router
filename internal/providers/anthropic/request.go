@@ -58,7 +58,7 @@ func EncodeRequest(req canonical.Request) ([]byte, error) {
 	payload := map[string]any{
 		"model":    req.PublicModel,
 		"system":   system,
-		"stream":   req.Stream,
+		"stream":   true,
 		"messages": messages,
 	}
 	if len(tools) > 0 {

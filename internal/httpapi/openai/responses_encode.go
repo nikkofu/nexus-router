@@ -36,7 +36,7 @@ func DecodeResponsesRequest(r io.Reader) (canonical.Request, error) {
 					Text: content.Text,
 				})
 			case "input_image":
-				if err := validatePublicImageRole(role); err != nil {
+				if err := validatePublicImageRole(item.Role, role); err != nil {
 					return canonical.Request{}, err
 				}
 

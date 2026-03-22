@@ -125,6 +125,14 @@ func TestResponsesHandlerRejectsUnsupportedPublicImageForms(t *testing.T) {
 			wantSemantics: "invalid_request",
 		},
 		{
+			name: "unknown image role",
+			payload: `{
+				"model":"openai/gpt-4.1",
+				"input":[{"role":"moderator","content":[{"type":"input_image","image_url":"https://example.com/cat.png"}]}]
+			}`,
+			wantSemantics: "invalid_request",
+		},
+		{
 			name: "non-http image url scheme",
 			payload: `{
 				"model":"openai/gpt-4.1",

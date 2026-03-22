@@ -17,7 +17,7 @@ func DecodeChatCompletionRequest(r io.Reader) (canonical.Request, error) {
 	conversation := make([]canonical.Turn, 0, len(req.Messages))
 	for _, msg := range req.Messages {
 		role := normalizeRole(msg.Role)
-		blocks, err := normalizeChatContent(msg.Content, role)
+		blocks, err := normalizeChatContent(msg.Content, msg.Role, role)
 		if err != nil {
 			return canonical.Request{}, err
 		}
@@ -71,7 +71,7 @@ func DecodeChatCompletionRequest(r io.Reader) (canonical.Request, error) {
 	}, nil
 }
 
-func normalizeChatContent(raw json.RawMessage, role canonical.Role) ([]canonical.ContentBlock, error) {
+func normalizeChatContent(raw json.RawMessage, rawRole string, role canonical.Role) ([]canonical.ContentBlock, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -98,7 +98,7 @@ func normalizeChatContent(raw json.RawMessage, role canonical.Role) ([]canonical
 				Text: fmt.Sprint(item["text"]),
 			})
 		case "image_url":
-			if err := validatePublicImageRole(role); err != nil {
+			if err := validatePublicImageRole(rawRole, role); err != nil {
 				return nil, err
 			}
 

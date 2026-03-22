@@ -32,8 +32,8 @@ func validatePublicImageURL(raw string) error {
 	}
 }
 
-func validatePublicImageRole(role canonical.Role) error {
-	if role != canonical.RoleUser {
+func validatePublicImageRole(rawRole string, role canonical.Role) error {
+	if rawRole != string(canonical.RoleUser) || role != canonical.RoleUser {
 		return invalidRequestError("image content is only allowed on user messages")
 	}
 

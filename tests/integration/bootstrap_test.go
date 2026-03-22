@@ -117,6 +117,55 @@ func TestMainBinaryServesAdminEndpointsOnAdminListener(t *testing.T) {
 	assertHTTPStatus(t, "http://127.0.0.1:"+publicPort+"/admin/config", http.StatusNotFound)
 }
 
+func TestMainBinaryGracefullyShutsDownOnInterrupt(t *testing.T) {
+	publicPort := reserveTCPPort(t)
+	adminPort := reserveTCPPort(t)
+	cfgPath := writeMainConfigFixture(t, publicPort, adminPort)
+	binPath := filepath.Join(t.TempDir(), "nexus-router")
+
+	buildCmd := exec.Command("go", "build", "-o", binPath, "./cmd/nexus-router")
+	buildCmd.Dir = "../.."
+	buildOutput, err := buildCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go build error = %v\n%s", err, buildOutput)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binPath, "-config", cfgPath)
+	cmd.Dir = "../.."
+	cmd.Env = append(os.Environ(), "OPENAI_API_KEY=openai-test-key")
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatalf("StderrPipe() error = %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	waitForHTTPStatus(t, "http://127.0.0.1:"+publicPort+"/livez", http.StatusOK, stderr)
+
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("Signal() error = %v", err)
+	}
+
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	select {
+	case err := <-waitCh:
+		if err != nil {
+			t.Fatalf("Wait() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("process did not exit after interrupt")
+	}
+}
+
 func TestServiceShutdownWithoutStartReturnsNil(t *testing.T) {
 	cfg := config.Config{
 		Server: config.ServerConfig{ListenAddr: "127.0.0.1:0"},

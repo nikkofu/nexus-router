@@ -12,8 +12,8 @@ import (
 var ErrUnsupportedCapability = errors.New("unsupported capability")
 
 func ValidatePublicTextOnly(req canonical.Request) error {
-	if len(req.Tools) > 0 {
-		return fmt.Errorf("%w: tools are not supported on public text endpoints", ErrUnsupportedCapability)
+	if len(req.Tools) > 0 && req.EndpointKind != canonical.EndpointKindChatCompletions {
+		return fmt.Errorf("%w: tools are not supported on this public endpoint", ErrUnsupportedCapability)
 	}
 
 	if requiresVision(req) {

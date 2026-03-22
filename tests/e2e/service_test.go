@@ -22,15 +22,9 @@ func TestPublicTextServiceRejectsUnsupportedCapabilities(t *testing.T) {
 
 	cases := []testCase{
 		{
-			name: "tools",
-			req: canonical.Request{
-				PublicModel: "openai/gpt-4.1",
-				Tools:       []canonical.Tool{{Name: "lookup_weather"}},
-			},
-		},
-		{
 			name: "image content",
 			req: canonical.Request{
+				EndpointKind: canonical.EndpointKindChatCompletions,
 				PublicModel: "openai/gpt-4.1",
 				Conversation: []canonical.Turn{
 					{
@@ -48,6 +42,7 @@ func TestPublicTextServiceRejectsUnsupportedCapabilities(t *testing.T) {
 		{
 			name: "structured output contract",
 			req: canonical.Request{
+				EndpointKind: canonical.EndpointKindChatCompletions,
 				PublicModel: "openai/gpt-4.1",
 				ResponseContract: canonical.ResponseContract{
 					Kind: canonical.ResponseContractJSONSchema,
@@ -84,6 +79,91 @@ func TestPublicTextServiceRejectsUnsupportedCapabilities(t *testing.T) {
 		})
 	}
 
+	if executor.calls != 0 {
+		t.Fatalf("executor calls = %d, want 0", executor.calls)
+	}
+}
+
+func TestPublicTextServiceAllowsChatTools(t *testing.T) {
+	planner := &stubPlanner{
+		plan: router.Plan{
+			Attempts: []router.Attempt{{Upstream: "anthropic-main"}},
+		},
+	}
+	executor := &stubExecutor{
+		result: providers.Result{
+			Events: []canonical.Event{
+				{Type: canonical.EventMessageStop, Data: map[string]any{"finish_reason": "tool_calls"}},
+			},
+		},
+	}
+	svc := service.NewExecuteService(capabilities.DefaultRegistry(), planner, executor)
+
+	_, _, err := svc.Execute(context.Background(), auth.ClientPolicy{
+		AllowStreaming:  true,
+		AllowVision:     true,
+		AllowTools:      true,
+		AllowStructured: true,
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindChatCompletions,
+		PublicModel:  "anthropic/claude-sonnet-4-5",
+		Tools: []canonical.Tool{
+			{
+				Name: "lookup_weather",
+				Schema: map[string]any{
+					"type": "object",
+				},
+			},
+		},
+		Stream: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if planner.calls != 1 {
+		t.Fatalf("planner calls = %d, want 1", planner.calls)
+	}
+	if executor.calls != 1 {
+		t.Fatalf("executor calls = %d, want 1", executor.calls)
+	}
+}
+
+func TestPublicTextServiceRejectsResponsesTools(t *testing.T) {
+	planner := &stubPlanner{
+		plan: router.Plan{
+			Attempts: []router.Attempt{{Upstream: "openai-main"}},
+		},
+	}
+	executor := &stubExecutor{}
+	svc := service.NewExecuteService(capabilities.DefaultRegistry(), planner, executor)
+
+	_, _, err := svc.Execute(context.Background(), auth.ClientPolicy{
+		AllowStreaming:  true,
+		AllowVision:     true,
+		AllowTools:      true,
+		AllowStructured: true,
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindResponses,
+		PublicModel:  "openai/gpt-4.1",
+		Tools: []canonical.Tool{
+			{
+				Name: "lookup_weather",
+				Schema: map[string]any{
+					"type": "object",
+				},
+			},
+		},
+		Stream: true,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, service.ErrUnsupportedCapability) {
+		t.Fatalf("error = %v, want ErrUnsupportedCapability", err)
+	}
+	if planner.calls != 0 {
+		t.Fatalf("planner calls = %d, want 0", planner.calls)
+	}
 	if executor.calls != 0 {
 		t.Fatalf("executor calls = %d, want 0", executor.calls)
 	}

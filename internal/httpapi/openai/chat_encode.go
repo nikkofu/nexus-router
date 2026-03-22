@@ -133,8 +133,6 @@ func normalizeChatImageURL(item map[string]any) (string, error) {
 	}
 
 	switch value := imageValue.(type) {
-	case string:
-		return value, nil
 	case map[string]any:
 		if _, hasFileID := value["file_id"]; hasFileID {
 			return "", unsupportedCapabilityError("image file_id form is not supported")
@@ -152,7 +150,7 @@ func normalizeChatImageURL(item map[string]any) (string, error) {
 
 		return imageURL, nil
 	default:
-		return "", invalidRequestError("image_url must be a string or object with a url field")
+		return "", invalidRequestError("image_url must be an object with a url field")
 	}
 }
 

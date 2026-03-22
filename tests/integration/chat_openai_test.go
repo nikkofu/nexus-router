@@ -47,6 +47,152 @@ func TestChatHandlerNormalizesMessagesIntoCanonicalRequest(t *testing.T) {
 	}
 }
 
+func TestChatHandlerDecodesManagedTools(t *testing.T) {
+	reqBody := `{
+		"model": "openai/gpt-4.1",
+		"stream": true,
+		"messages": [
+			{"role": "user", "content": "weather?"}
+		],
+		"tools": [
+			{
+				"type": "function",
+				"function": {
+					"name": "lookup_weather",
+					"parameters": {
+						"type": "object",
+						"properties": {
+							"city": {"type": "string"}
+						}
+					}
+				}
+			}
+		]
+	}`
+
+	got, err := openaiapi.DecodeChatCompletionRequest(strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("DecodeChatCompletionRequest() error = %v", err)
+	}
+
+	if len(got.Tools) != 1 {
+		t.Fatalf("tools len = %d, want 1", len(got.Tools))
+	}
+	if got.Tools[0].Name != "lookup_weather" {
+		t.Fatalf("tool name = %q, want %q", got.Tools[0].Name, "lookup_weather")
+	}
+}
+
+func TestChatHandlerAcceptsAutoToolChoice(t *testing.T) {
+	reqBody := `{
+		"model": "openai/gpt-4.1",
+		"stream": true,
+		"messages": [
+			{"role": "user", "content": "weather?"}
+		],
+		"tools": [
+			{
+				"type": "function",
+				"function": {
+					"name": "lookup_weather",
+					"parameters": {"type": "object"}
+				}
+			}
+		],
+		"tool_choice": "auto"
+	}`
+
+	got, err := openaiapi.DecodeChatCompletionRequest(strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("DecodeChatCompletionRequest() error = %v", err)
+	}
+
+	if got.ToolChoice.Name != "" {
+		t.Fatalf("tool choice name = %q, want empty", got.ToolChoice.Name)
+	}
+}
+
+func TestChatHandlerDecodesNamedToolChoice(t *testing.T) {
+	reqBody := `{
+		"model": "openai/gpt-4.1",
+		"stream": true,
+		"messages": [
+			{"role": "user", "content": "weather?"}
+		],
+		"tools": [
+			{
+				"type": "function",
+				"function": {
+					"name": "lookup_weather",
+					"parameters": {"type": "object"}
+				}
+			}
+		],
+		"tool_choice": {
+			"type": "function",
+			"function": {
+				"name": "lookup_weather"
+			}
+		}
+	}`
+
+	got, err := openaiapi.DecodeChatCompletionRequest(strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("DecodeChatCompletionRequest() error = %v", err)
+	}
+
+	if got.ToolChoice.Name != "lookup_weather" {
+		t.Fatalf("tool choice name = %q, want %q", got.ToolChoice.Name, "lookup_weather")
+	}
+}
+
+func TestChatHandlerRejectsUnsupportedToolChoice(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name: "required string",
+			payload: `{
+				"model": "openai/gpt-4.1",
+				"stream": true,
+				"messages": [{"role": "user", "content": "weather?"}],
+				"tool_choice": "required"
+			}`,
+		},
+		{
+			name: "none string",
+			payload: `{
+				"model": "openai/gpt-4.1",
+				"stream": true,
+				"messages": [{"role": "user", "content": "weather?"}],
+				"tool_choice": "none"
+			}`,
+		},
+		{
+			name: "malformed named object",
+			payload: `{
+				"model": "openai/gpt-4.1",
+				"stream": true,
+				"messages": [{"role": "user", "content": "weather?"}],
+				"tool_choice": {"type": "function", "function": {}}
+			}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := openaiapi.DecodeChatCompletionRequest(strings.NewReader(tc.payload))
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), "tool_choice") {
+				t.Fatalf("error = %q, want tool_choice validation failure", err.Error())
+			}
+		})
+	}
+}
+
 func TestUnsupportedCapabilityReturnsOpenAIError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	openaiapi.WriteError(rec, http.StatusBadRequest, "unsupported_capability", "vision not allowed")

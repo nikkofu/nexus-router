@@ -38,6 +38,11 @@ func DecodeChatCompletionRequest(r io.Reader) (canonical.Request, error) {
 		})
 	}
 
+	toolChoice, err := decodeChatToolChoice(req.ToolChoice)
+	if err != nil {
+		return canonical.Request{}, err
+	}
+
 	stop, err := decodeStop(req.Stop)
 	if err != nil {
 		return canonical.Request{}, err
@@ -59,6 +64,7 @@ func DecodeChatCompletionRequest(r io.Reader) (canonical.Request, error) {
 			Stop:            stop,
 		},
 		Tools:            tools,
+		ToolChoice:       toolChoice,
 		ResponseContract: decodeChatResponseContract(req.ResponseFormat),
 		Stream:           req.Stream,
 	}, nil
@@ -139,6 +145,35 @@ func decodeStop(raw json.RawMessage) ([]string, error) {
 	}
 
 	return many, nil
+}
+
+func decodeChatToolChoice(raw json.RawMessage) (canonical.ToolChoice, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return canonical.ToolChoice{}, nil
+	}
+
+	var mode string
+	if err := json.Unmarshal(raw, &mode); err == nil {
+		if mode == "" || mode == "auto" {
+			return canonical.ToolChoice{}, nil
+		}
+		return canonical.ToolChoice{}, fmt.Errorf("invalid tool_choice: unsupported value %q", mode)
+	}
+
+	var choice struct {
+		Type     string `json:"type"`
+		Function *struct {
+			Name string `json:"name"`
+		} `json:"function,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &choice); err != nil {
+		return canonical.ToolChoice{}, fmt.Errorf("invalid tool_choice: %w", err)
+	}
+	if choice.Type != "function" || choice.Function == nil || choice.Function.Name == "" {
+		return canonical.ToolChoice{}, fmt.Errorf("invalid tool_choice: expected named function tool choice")
+	}
+
+	return canonical.ToolChoice{Name: choice.Function.Name}, nil
 }
 
 func decodeChatResponseContract(format *ChatResponseFormat) canonical.ResponseContract {

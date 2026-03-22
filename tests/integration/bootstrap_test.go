@@ -50,7 +50,7 @@ func TestMainBinaryBuilds(t *testing.T) {
 
 func TestMainBinaryLoadsConfigFileAndServesConfiguredAddress(t *testing.T) {
 	port := reserveTCPPort(t)
-	cfgPath := writeMainConfigFixture(t, port)
+	cfgPath := writeMainConfigFixture(t, port, reserveTCPPort(t))
 	binPath := filepath.Join(t.TempDir(), "nexus-router")
 
 	buildCmd := exec.Command("go", "build", "-o", binPath, "./cmd/nexus-router")
@@ -79,6 +79,42 @@ func TestMainBinaryLoadsConfigFileAndServesConfiguredAddress(t *testing.T) {
 	}()
 
 	waitForHTTPStatus(t, "http://127.0.0.1:"+port+"/livez", http.StatusOK, stderr)
+}
+
+func TestMainBinaryServesAdminEndpointsOnAdminListener(t *testing.T) {
+	publicPort := reserveTCPPort(t)
+	adminPort := reserveTCPPort(t)
+	cfgPath := writeMainConfigFixture(t, publicPort, adminPort)
+	binPath := filepath.Join(t.TempDir(), "nexus-router")
+
+	buildCmd := exec.Command("go", "build", "-o", binPath, "./cmd/nexus-router")
+	buildCmd.Dir = "../.."
+	buildOutput, err := buildCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go build error = %v\n%s", err, buildOutput)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binPath, "-config", cfgPath)
+	cmd.Dir = "../.."
+	cmd.Env = append(os.Environ(), "OPENAI_API_KEY=openai-test-key")
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatalf("StderrPipe() error = %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+
+	waitForHTTPStatus(t, "http://127.0.0.1:"+publicPort+"/livez", http.StatusOK, stderr)
+	waitForHTTPStatus(t, "http://127.0.0.1:"+adminPort+"/admin/config", http.StatusOK, stderr)
+	assertHTTPStatus(t, "http://127.0.0.1:"+publicPort+"/admin/config", http.StatusNotFound)
 }
 
 func TestServiceShutdownWithoutStartReturnsNil(t *testing.T) {
@@ -116,14 +152,14 @@ func reserveTCPPort(t *testing.T) string {
 	return port
 }
 
-func writeMainConfigFixture(t *testing.T, port string) string {
+func writeMainConfigFixture(t *testing.T, publicPort, adminPort string) string {
 	t.Helper()
 
 	cfgPath := filepath.Join(t.TempDir(), "nexus-router.yaml")
 	cfg := fmt.Sprintf(`
 server:
   listen_addr: 127.0.0.1:%s
-  admin_listen_addr: 127.0.0.1:19090
+  admin_listen_addr: 127.0.0.1:%s
   tls:
     mode: disabled
 auth:
@@ -156,7 +192,7 @@ breaker:
   open_interval: 30s
 limits:
   max_request_bytes: 1048576
-`, port)
+`, publicPort, adminPort)
 
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -188,6 +224,22 @@ func waitForHTTPStatus(t *testing.T, url string, want int, stderr io.Reader) {
 
 	data, _ := io.ReadAll(stderr)
 	t.Fatalf("timed out waiting for %s = %d; stderr=%s", url, want, data)
+}
+
+func assertHTTPStatus(t *testing.T, url string, want int) {
+	t.Helper()
+
+	client := &http.Client{Timeout: time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("Get(%q) error = %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != want {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status for %s = %d, want %d, body = %q", url, resp.StatusCode, want, body)
+	}
 }
 
 func TestLoadConfigRejectsUnknownRouteGroup(t *testing.T) {

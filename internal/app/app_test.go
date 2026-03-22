@@ -97,6 +97,57 @@ func TestServiceStartFailureCleansUpBackgroundRuntime(t *testing.T) {
 	}
 }
 
+func TestServiceStartAdminListenFailureCleansUpBackgroundRuntime(t *testing.T) {
+	done := make(chan struct{})
+	cancelCalled := make(chan struct{})
+	releaseDone := make(chan struct{})
+
+	svc := &Service{
+		server: &http.Server{
+			Addr: "127.0.0.1:0",
+		},
+		adminServer: &http.Server{
+			Addr: "bad-addr",
+		},
+		runtimeCancel: func() {
+			close(cancelCalled)
+			go func() {
+				<-releaseDone
+				close(done)
+			}()
+		},
+		runtimeDone: done,
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		result <- svc.Start()
+	}()
+
+	select {
+	case <-cancelCalled:
+	case <-time.After(time.Second):
+		t.Fatal("Start() did not cancel runtime work after admin listen failure")
+	}
+
+	select {
+	case err := <-result:
+		t.Fatalf("Start() returned before background runtime stopped: %v", err)
+	default:
+	}
+
+	close(releaseDone)
+
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("Start() error = nil, want admin listen failure")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Start() did not return after background runtime stopped")
+	}
+}
+
 func TestServiceServeErrorCleansUpBackgroundRuntime(t *testing.T) {
 	done := make(chan struct{})
 	cancelCalled := make(chan struct{})

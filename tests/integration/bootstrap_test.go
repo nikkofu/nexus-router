@@ -3,10 +3,13 @@ package integration
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +48,39 @@ func TestMainBinaryBuilds(t *testing.T) {
 	}
 }
 
+func TestMainBinaryLoadsConfigFileAndServesConfiguredAddress(t *testing.T) {
+	port := reserveTCPPort(t)
+	cfgPath := writeMainConfigFixture(t, port)
+	binPath := filepath.Join(t.TempDir(), "nexus-router")
+
+	buildCmd := exec.Command("go", "build", "-o", binPath, "./cmd/nexus-router")
+	buildCmd.Dir = "../.."
+	buildOutput, err := buildCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go build error = %v\n%s", err, buildOutput)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binPath, "-config", cfgPath)
+	cmd.Dir = "../.."
+	cmd.Env = append(os.Environ(), "OPENAI_API_KEY=openai-test-key")
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatalf("StderrPipe() error = %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+
+	waitForHTTPStatus(t, "http://127.0.0.1:"+port+"/livez", http.StatusOK, stderr)
+}
+
 func TestServiceShutdownWithoutStartReturnsNil(t *testing.T) {
 	cfg := config.Config{
 		Server: config.ServerConfig{ListenAddr: "127.0.0.1:0"},
@@ -61,6 +97,97 @@ func TestServiceShutdownWithoutStartReturnsNil(t *testing.T) {
 	if err := srv.Shutdown(ctx); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
 	}
+}
+
+func reserveTCPPort(t *testing.T) string {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer ln.Close()
+
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort() error = %v", err)
+	}
+
+	return port
+}
+
+func writeMainConfigFixture(t *testing.T, port string) string {
+	t.Helper()
+
+	cfgPath := filepath.Join(t.TempDir(), "nexus-router.yaml")
+	cfg := fmt.Sprintf(`
+server:
+  listen_addr: 127.0.0.1:%s
+  admin_listen_addr: 127.0.0.1:19090
+  tls:
+    mode: disabled
+auth:
+  client_keys:
+    - id: local-dev
+      secret: sk-nx-local-dev
+      active: true
+      allowed_model_patterns:
+        - openai/gpt-*
+      allow_streaming: true
+models:
+  - pattern: openai/gpt-*
+    route_group: openai-family
+providers:
+  - name: openai-main
+    provider: openai
+    base_url: https://api.openai.com
+    api_key_env: OPENAI_API_KEY
+routing:
+  route_groups:
+    - name: openai-family
+      primary: openai-main
+health:
+  probe_interval: 1h
+  probe_timeout: 1s
+  require_initial_probe: false
+breaker:
+  failure_threshold: 3
+  recovery_success_threshold: 1
+  open_interval: 30s
+limits:
+  max_request_bytes: 1048576
+`, port)
+
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	return cfgPath
+}
+
+func waitForHTTPStatus(t *testing.T, url string, want int, stderr io.Reader) {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	client := &http.Client{Timeout: 200 * time.Millisecond}
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(url)
+		if err == nil {
+			body, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if readErr != nil {
+				t.Fatalf("ReadAll() error = %v", readErr)
+			}
+			if resp.StatusCode == want {
+				return
+			}
+			_ = body
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	data, _ := io.ReadAll(stderr)
+	t.Fatalf("timed out waiting for %s = %d; stderr=%s", url, want, data)
 }
 
 func TestLoadConfigRejectsUnknownRouteGroup(t *testing.T) {

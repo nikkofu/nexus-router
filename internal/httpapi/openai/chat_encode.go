@@ -97,9 +97,13 @@ func normalizeChatContent(raw json.RawMessage, rawRole string, role canonical.Ro
 			if isImageLikeContentItem(item) {
 				return nil, invalidRequestError("messages.content text items must not include image fields")
 			}
+			text, err := normalizePublicTextField(item, "text")
+			if err != nil {
+				return nil, err
+			}
 			blocks = append(blocks, canonical.ContentBlock{
 				Type: canonical.ContentTypeText,
-				Text: fmt.Sprint(item["text"]),
+				Text: text,
 			})
 		case "image_url":
 			if err := validatePublicImageRole(rawRole, role); err != nil {

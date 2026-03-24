@@ -56,6 +56,20 @@ func isImageLikeContentItem(item map[string]any) bool {
 	return false
 }
 
+func normalizePublicTextField(item map[string]any, field string) (string, error) {
+	rawValue, ok := item[field]
+	if !ok {
+		return "", invalidRequestError("%s must be a string", field)
+	}
+
+	text, ok := rawValue.(string)
+	if !ok {
+		return "", invalidRequestError("%s must be a string", field)
+	}
+
+	return text, nil
+}
+
 func validateAllowedObjectKeys(raw map[string]any, allowed ...string) error {
 	allowedSet := make(map[string]struct{}, len(allowed))
 	for _, key := range allowed {

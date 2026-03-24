@@ -109,6 +109,14 @@ func TestResponsesHandlerRejectsUnsupportedPublicImageForms(t *testing.T) {
 			wantSemantics: "invalid_request",
 		},
 		{
+			name: "input_text field contains image object",
+			payload: `{
+				"model":"openai/gpt-4.1",
+				"input":[{"role":"user","content":[{"type":"input_text","text":{"image_url":"https://example.com/cat.png"}}]}]
+			}`,
+			wantSemantics: "invalid_request",
+		},
+		{
 			name: "malformed image item shape",
 			payload: `{
 				"model":"openai/gpt-4.1",

@@ -34,9 +34,13 @@ func DecodeResponsesRequest(r io.Reader) (canonical.Request, error) {
 				if isImageLikeContentItem(content.Raw) {
 					return canonical.Request{}, invalidRequestError("input_text items must not include image fields")
 				}
+				text, err := normalizePublicTextField(content.Raw, "text")
+				if err != nil {
+					return canonical.Request{}, err
+				}
 				blocks = append(blocks, canonical.ContentBlock{
 					Type: canonical.ContentTypeText,
-					Text: content.Text,
+					Text: text,
 				})
 			case "input_image":
 				if err := validatePublicImageRole(item.Role, role); err != nil {

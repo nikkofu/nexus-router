@@ -11,17 +11,13 @@ import (
 
 var ErrUnsupportedCapability = errors.New("unsupported capability")
 
-func ValidatePublicTextOnly(req canonical.Request) error {
+func ValidatePublicSurface(req canonical.Request) error {
 	if len(req.Tools) > 0 && req.EndpointKind != canonical.EndpointKindChatCompletions {
 		return fmt.Errorf("%w: tools are not supported on this public endpoint", ErrUnsupportedCapability)
 	}
 
-	if requiresVision(req) {
-		return fmt.Errorf("%w: image content is not supported on public text endpoints", ErrUnsupportedCapability)
-	}
-
 	if req.ResponseContract.Kind == canonical.ResponseContractJSONSchema || req.ResponseContract.Kind == canonical.ResponseContractJSONObject {
-		return fmt.Errorf("%w: structured output contracts are not supported on public text endpoints", ErrUnsupportedCapability)
+		return fmt.Errorf("%w: structured output contracts are not supported on public endpoints", ErrUnsupportedCapability)
 	}
 
 	return nil

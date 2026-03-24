@@ -22,24 +22,6 @@ func TestPublicTextServiceRejectsUnsupportedCapabilities(t *testing.T) {
 
 	cases := []testCase{
 		{
-			name: "image content",
-			req: canonical.Request{
-				EndpointKind: canonical.EndpointKindChatCompletions,
-				PublicModel: "openai/gpt-4.1",
-				Conversation: []canonical.Turn{
-					{
-						Role: canonical.RoleUser,
-						Content: []canonical.ContentBlock{
-							{
-								Type:  canonical.ContentTypeImage,
-								Image: &canonical.ImageInput{URL: "https://example.com/image.png", MIMEType: "image/png"},
-							},
-						},
-					},
-				},
-			},
-		},
-		{
 			name: "structured output contract",
 			req: canonical.Request{
 				EndpointKind: canonical.EndpointKindChatCompletions,
@@ -49,6 +31,16 @@ func TestPublicTextServiceRejectsUnsupportedCapabilities(t *testing.T) {
 					Schema: map[string]any{
 						"type": "object",
 					},
+				},
+			},
+		},
+		{
+			name: "structured output object",
+			req: canonical.Request{
+				EndpointKind: canonical.EndpointKindChatCompletions,
+				PublicModel: "openai/gpt-4.1",
+				ResponseContract: canonical.ResponseContract{
+					Kind: canonical.ResponseContractJSONObject,
 				},
 			},
 		},
@@ -81,6 +73,102 @@ func TestPublicTextServiceRejectsUnsupportedCapabilities(t *testing.T) {
 
 	if executor.calls != 0 {
 		t.Fatalf("executor calls = %d, want 0", executor.calls)
+	}
+}
+
+func TestPublicServiceAllowsChatVision(t *testing.T) {
+	planner := &stubPlanner{
+		plan: router.Plan{
+			Attempts: []router.Attempt{{Upstream: "openai-main"}},
+		},
+	}
+	executor := &stubExecutor{
+		result: providers.Result{
+			Events: []canonical.Event{
+				{Type: canonical.EventContentDelta, Data: map[string]any{"text": "hello"}},
+			},
+		},
+	}
+	svc := service.NewExecuteService(capabilities.DefaultRegistry(), planner, executor)
+
+	_, _, err := svc.Execute(context.Background(), auth.ClientPolicy{
+		AllowStreaming:  true,
+		AllowVision:     true,
+		AllowTools:      true,
+		AllowStructured: true,
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindChatCompletions,
+		PublicModel:  "openai/gpt-4.1",
+		Conversation: []canonical.Turn{
+			{
+				Role: canonical.RoleUser,
+				Content: []canonical.ContentBlock{
+					{Type: canonical.ContentTypeText, Text: "describe"},
+					{
+						Type:  canonical.ContentTypeImage,
+						Image: &canonical.ImageInput{URL: "https://example.com/cat.png", MIMEType: "image/png"},
+					},
+				},
+			},
+		},
+		Stream: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if planner.calls != 1 {
+		t.Fatalf("planner calls = %d, want 1", planner.calls)
+	}
+	if executor.calls != 1 {
+		t.Fatalf("executor calls = %d, want 1", executor.calls)
+	}
+}
+
+func TestPublicServiceAllowsResponsesVision(t *testing.T) {
+	planner := &stubPlanner{
+		plan: router.Plan{
+			Attempts: []router.Attempt{{Upstream: "openai-main"}},
+		},
+	}
+	executor := &stubExecutor{
+		result: providers.Result{
+			Events: []canonical.Event{
+				{Type: canonical.EventContentDelta, Data: map[string]any{"text": "hello"}},
+			},
+		},
+	}
+	svc := service.NewExecuteService(capabilities.DefaultRegistry(), planner, executor)
+
+	_, _, err := svc.Execute(context.Background(), auth.ClientPolicy{
+		AllowStreaming:  true,
+		AllowVision:     true,
+		AllowTools:      true,
+		AllowStructured: true,
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindResponses,
+		PublicModel:  "openai/gpt-4.1",
+		Conversation: []canonical.Turn{
+			{
+				Role: canonical.RoleUser,
+				Content: []canonical.ContentBlock{
+					{Type: canonical.ContentTypeText, Text: "describe"},
+					{
+						Type:  canonical.ContentTypeImage,
+						Image: &canonical.ImageInput{URL: "https://example.com/cat.png", MIMEType: "image/png"},
+					},
+				},
+			},
+		},
+		Stream: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if planner.calls != 1 {
+		t.Fatalf("planner calls = %d, want 1", planner.calls)
+	}
+	if executor.calls != 1 {
+		t.Fatalf("executor calls = %d, want 1", executor.calls)
 	}
 }
 

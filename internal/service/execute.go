@@ -33,7 +33,7 @@ func NewExecuteService(registry capabilities.Registry, planner planner, executor
 }
 
 func (s *ExecuteService) Execute(ctx context.Context, policy auth.ClientPolicy, req canonical.Request) (providers.Result, []string, error) {
-	if err := capabilities.ValidatePublicTextOnly(req); err != nil {
+	if err := capabilities.ValidatePublicSurface(req); err != nil {
 		return providers.Result{}, nil, err
 	}
 

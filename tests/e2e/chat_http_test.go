@@ -216,3 +216,111 @@ func TestChatCompletionsHTTPStreamingAnthropicTools(t *testing.T) {
 	assertBodyContains(t, body, "\"tool_calls\"", "\"lookup_weather\"", "[DONE]")
 	assertBodyContains(t, env.Primary.Body(), "\"tools\":[", "\"tool_choice\":", "\"name\":\"lookup_weather\"")
 }
+
+func TestChatCompletionsHTTPRejectsUnsupportedPublicImageForms(t *testing.T) {
+	cases := []struct {
+		name          string
+		payload       map[string]any
+		wantErrorType string
+	}{
+		{
+			name: "malformed image item shape",
+			payload: map[string]any{
+				"model":  "openai/gpt-4.1",
+				"stream": true,
+				"messages": []map[string]any{
+					{
+						"role": "user",
+						"content": []map[string]any{
+							{
+								"type":      "image_url",
+								"image_url": []any{"https://example.com/cat.png"},
+							},
+						},
+					},
+				},
+			},
+			wantErrorType: "invalid_request",
+		},
+		{
+			name: "empty image url",
+			payload: map[string]any{
+				"model":  "openai/gpt-4.1",
+				"stream": true,
+				"messages": []map[string]any{
+					{
+						"role": "user",
+						"content": []map[string]any{
+							{
+								"type": "image_url",
+								"image_url": map[string]any{
+									"url": "",
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErrorType: "invalid_request",
+		},
+		{
+			name: "data url image",
+			payload: map[string]any{
+				"model":  "openai/gpt-4.1",
+				"stream": true,
+				"messages": []map[string]any{
+					{
+						"role": "user",
+						"content": []map[string]any{
+							{
+								"type": "image_url",
+								"image_url": map[string]any{
+									"url": "data:image/png;base64,AAAA",
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErrorType: "unsupported_capability",
+		},
+		{
+			name: "file id image form",
+			payload: map[string]any{
+				"model":  "openai/gpt-4.1",
+				"stream": true,
+				"messages": []map[string]any{
+					{
+						"role": "user",
+						"content": []map[string]any{
+							{
+								"type": "image_url",
+								"image_url": map[string]any{
+									"file_id": "file_abc123",
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErrorType: "unsupported_capability",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := startHTTPTestEnv(t, "openai_text")
+			defer env.Close()
+
+			resp := postJSON(t, env.Client, env.BaseURL+"/v1/chat/completions", env.Token, tc.payload)
+			assertStatus(t, resp, 400)
+
+			body := readBody(t, resp)
+			assertJSONErrorType(t, body, tc.wantErrorType)
+
+			if env.Primary.Hits() != 0 {
+				t.Fatalf("primary hits = %d, want 0", env.Primary.Hits())
+			}
+		})
+	}
+}

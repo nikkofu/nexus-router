@@ -116,6 +116,8 @@ func normalizeChatContent(raw json.RawMessage, rawRole string, role canonical.Ro
 					URL: imageURL,
 				},
 			})
+		default:
+			return nil, invalidRequestError("messages.content item type %q is not supported", fmt.Sprint(item["type"]))
 		}
 	}
 
@@ -125,6 +127,9 @@ func normalizeChatContent(raw json.RawMessage, rawRole string, role canonical.Ro
 func normalizeChatImageURL(item map[string]any) (string, error) {
 	if _, hasFileID := item["file_id"]; hasFileID {
 		return "", unsupportedCapabilityError("image file_id form is not supported")
+	}
+	if err := validateAllowedObjectKeys(item, "type", "image_url"); err != nil {
+		return "", err
 	}
 
 	imageValue, ok := item["image_url"]
@@ -136,6 +141,9 @@ func normalizeChatImageURL(item map[string]any) (string, error) {
 	case map[string]any:
 		if _, hasFileID := value["file_id"]; hasFileID {
 			return "", unsupportedCapabilityError("image file_id form is not supported")
+		}
+		if err := validateAllowedObjectKeys(value, "url"); err != nil {
+			return "", err
 		}
 
 		rawURL, ok := value["url"]

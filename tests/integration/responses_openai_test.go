@@ -93,12 +93,28 @@ func TestResponsesHandlerRejectsUnsupportedPublicImageForms(t *testing.T) {
 		wantSemantics string
 	}{
 		{
+			name: "unknown image-like type",
+			payload: `{
+				"model":"openai/gpt-4.1",
+				"input":[{"role":"user","content":[{"type":"image_url","image_url":"https://example.com/cat.png"}]}]
+			}`,
+			wantSemantics: "invalid_request",
+		},
+		{
 			name: "malformed image item shape",
 			payload: `{
 				"model":"openai/gpt-4.1",
 				"input":[{"role":"user","content":[{"type":"input_image","image_url":{"url":"https://example.com/cat.png"}}]}]
 			}`,
 			wantSemantics: "invalid_request",
+		},
+		{
+			name: "provider image detail option",
+			payload: `{
+				"model":"openai/gpt-4.1",
+				"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/cat.png","detail":"low"}]}]
+			}`,
+			wantSemantics: "unsupported_capability",
 		},
 		{
 			name: "missing image url",

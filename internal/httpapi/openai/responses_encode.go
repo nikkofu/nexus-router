@@ -54,6 +54,8 @@ func DecodeResponsesRequest(r io.Reader) (canonical.Request, error) {
 						URL: imageURL,
 					},
 				})
+			default:
+				return canonical.Request{}, invalidRequestError("input content item type %q is not supported", content.Type)
 			}
 		}
 
@@ -117,6 +119,9 @@ func (r *responsesContentInput) UnmarshalJSON(data []byte) error {
 func normalizeResponsesImageURL(item map[string]any) (string, error) {
 	if _, hasFileID := item["file_id"]; hasFileID {
 		return "", unsupportedCapabilityError("input_image file_id form is not supported")
+	}
+	if err := validateAllowedObjectKeys(item, "type", "image_url"); err != nil {
+		return "", err
 	}
 
 	imageValue, ok := item["image_url"]

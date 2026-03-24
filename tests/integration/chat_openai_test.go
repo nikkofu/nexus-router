@@ -92,12 +92,28 @@ func TestChatHandlerRejectsUnsupportedPublicImageForms(t *testing.T) {
 		wantSemantics string
 	}{
 		{
+			name: "unknown image-like type",
+			payload: `{
+				"model":"openai/gpt-4.1",
+				"messages":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/cat.png"}]}]
+			}`,
+			wantSemantics: "invalid_request",
+		},
+		{
 			name: "bare string image url",
 			payload: `{
 				"model":"openai/gpt-4.1",
 				"messages":[{"role":"user","content":[{"type":"image_url","image_url":"https://example.com/cat.png"}]}]
 			}`,
 			wantSemantics: "invalid_request",
+		},
+		{
+			name: "provider image detail option",
+			payload: `{
+				"model":"openai/gpt-4.1",
+				"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/cat.png","detail":"low"}}]}]
+			}`,
+			wantSemantics: "unsupported_capability",
 		},
 		{
 			name: "malformed image item shape",

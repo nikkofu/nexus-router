@@ -40,6 +40,22 @@ func validatePublicImageRole(rawRole string, role canonical.Role) error {
 	return nil
 }
 
+func validateAllowedObjectKeys(raw map[string]any, allowed ...string) error {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, key := range allowed {
+		allowedSet[key] = struct{}{}
+	}
+
+	for key := range raw {
+		if _, ok := allowedSet[key]; ok {
+			continue
+		}
+		return unsupportedCapabilityError("field %q is not supported on this public image form", key)
+	}
+
+	return nil
+}
+
 func invalidRequestError(format string, args ...any) error {
 	return fmt.Errorf("invalid_request: "+format, args...)
 }

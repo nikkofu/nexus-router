@@ -120,6 +120,105 @@ func TestAnthropicResponsesRouteNormalizesOutput(t *testing.T) {
 	}
 }
 
+func TestAnthropicRouteTranslatesResponsesVisionInput(t *testing.T) {
+	server, capture := newAnthropicStubServer(t, "messages_stream")
+	adapter := anthropic.NewAdapter(server.Client())
+
+	_, err := adapter.Execute(context.Background(), config.ProviderConfig{
+		BaseURL: server.URL,
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindResponses,
+		PublicModel:  "anthropic/claude-sonnet-4-5",
+		Conversation: []canonical.Turn{
+			{
+				Role: canonical.RoleUser,
+				Content: []canonical.ContentBlock{
+					{
+						Type: canonical.ContentTypeText,
+						Text: "describe this image",
+					},
+					{
+						Type: canonical.ContentTypeImage,
+						Image: &canonical.ImageInput{
+							URL:      "https://example.com/cat.png",
+							MIMEType: "image/png",
+						},
+					},
+				},
+			},
+		},
+		Stream: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(capture.Body()), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	messages, ok := payload["messages"].([]any)
+	if !ok {
+		t.Fatalf("messages = %#v, want array", payload["messages"])
+	}
+
+	var imageBlock map[string]any
+	for _, rawMessage := range messages {
+		message, ok := rawMessage.(map[string]any)
+		if !ok {
+			continue
+		}
+		content, ok := message["content"].([]any)
+		if !ok {
+			continue
+		}
+		for _, rawBlock := range content {
+			block, ok := rawBlock.(map[string]any)
+			if !ok {
+				continue
+			}
+			if block["type"] == "image" {
+				imageBlock = block
+				break
+			}
+		}
+		if imageBlock != nil {
+			break
+		}
+	}
+
+	if imageBlock == nil {
+		t.Fatalf("captured body missing image block: %s", capture.Body())
+	}
+
+	source, ok := imageBlock["source"].(map[string]any)
+	if !ok {
+		t.Fatalf("image.source = %#v, want object", imageBlock["source"])
+	}
+	if source["type"] != "url" {
+		t.Fatalf("image.source.type = %#v, want %q", source["type"], "url")
+	}
+	if source["url"] != "https://example.com/cat.png" {
+		t.Fatalf("image.source.url = %#v, want %q", source["url"], "https://example.com/cat.png")
+	}
+	if _, ok := source["media_type"]; ok {
+		t.Fatalf("image.source.media_type should be omitted, got %#v", source["media_type"])
+	}
+	if _, ok := source["data"]; ok {
+		t.Fatalf("image.source.data should be omitted, got %#v", source["data"])
+	}
+	if _, ok := source["file"]; ok {
+		t.Fatalf("image.source.file should be omitted, got %#v", source["file"])
+	}
+	if _, ok := source["file_id"]; ok {
+		t.Fatalf("image.source.file_id should be omitted, got %#v", source["file_id"])
+	}
+	if len(source) != 2 {
+		t.Fatalf("image.source = %#v, want only type and url", source)
+	}
+}
+
 func TestAnthropicRouteEncodesNamedToolChoice(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
 

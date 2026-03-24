@@ -34,9 +34,8 @@ func EncodeRequest(req canonical.Request) ([]byte, error) {
 				content = append(content, map[string]any{
 					"type": "image",
 					"source": map[string]any{
-						"type":       "url",
-						"url":        block.Image.URL,
-						"media_type": block.Image.MIMEType,
+						"type": "url",
+						"url":  block.Image.URL,
 					},
 				})
 			}

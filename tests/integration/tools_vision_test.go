@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/nikkofu/nexus-router/internal/capabilities"
 	"github.com/nikkofu/nexus-router/internal/config"
 	"github.com/nikkofu/nexus-router/internal/providers/anthropic"
+	"github.com/nikkofu/nexus-router/internal/providers/openai"
 	"github.com/nikkofu/nexus-router/internal/streaming"
 )
 
@@ -127,11 +129,237 @@ func TestVisionRequestMapsToAnthropicBlocks(t *testing.T) {
 	}
 
 	body := capture.Body()
-	if !strings.Contains(body, `"type":"image"`) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	messages, ok := payload["messages"].([]any)
+	if !ok {
+		t.Fatalf("messages = %#v, want array", payload["messages"])
+	}
+
+	var imageBlock map[string]any
+	for _, rawMessage := range messages {
+		message, ok := rawMessage.(map[string]any)
+		if !ok {
+			continue
+		}
+		content, ok := message["content"].([]any)
+		if !ok {
+			continue
+		}
+		for _, rawBlock := range content {
+			block, ok := rawBlock.(map[string]any)
+			if !ok {
+				continue
+			}
+			if block["type"] == "image" {
+				imageBlock = block
+				break
+			}
+		}
+		if imageBlock != nil {
+			break
+		}
+	}
+
+	if imageBlock == nil {
 		t.Fatalf("captured body missing image block: %s", body)
 	}
-	if !strings.Contains(body, `"url":"https://example.com/cat.png"`) {
-		t.Fatalf("captured body missing image URL: %s", body)
+
+	source, ok := imageBlock["source"].(map[string]any)
+	if !ok {
+		t.Fatalf("image.source = %#v, want object", imageBlock["source"])
+	}
+	if source["type"] != "url" {
+		t.Fatalf("image.source.type = %#v, want %q", source["type"], "url")
+	}
+	if source["url"] != "https://example.com/cat.png" {
+		t.Fatalf("image.source.url = %#v, want %q", source["url"], "https://example.com/cat.png")
+	}
+	if _, ok := source["media_type"]; ok {
+		t.Fatalf("image.source.media_type should be omitted, got %#v", source["media_type"])
+	}
+	if _, ok := source["data"]; ok {
+		t.Fatalf("image.source.data should be omitted, got %#v", source["data"])
+	}
+	if _, ok := source["file"]; ok {
+		t.Fatalf("image.source.file should be omitted, got %#v", source["file"])
+	}
+	if _, ok := source["file_id"]; ok {
+		t.Fatalf("image.source.file_id should be omitted, got %#v", source["file_id"])
+	}
+	if len(source) != 2 {
+		t.Fatalf("image.source = %#v, want only type and url", source)
+	}
+}
+
+func TestOpenAIAdapterEncodesChatVision(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "openai-test-key")
+
+	server, capture := newOpenAICaptureStubServer(t, "chat_stream")
+	adapter := openai.NewAdapter(server.Client())
+
+	_, err := adapter.Execute(context.Background(), config.ProviderConfig{
+		Provider:  "openai",
+		BaseURL:   server.URL,
+		APIKeyEnv: "OPENAI_API_KEY",
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindChatCompletions,
+		PublicModel:  "openai/gpt-4.1",
+		Conversation: []canonical.Turn{
+			{
+				Role: canonical.RoleUser,
+				Content: []canonical.ContentBlock{
+					{
+						Type: canonical.ContentTypeText,
+						Text: "describe this image",
+					},
+					{
+						Type: canonical.ContentTypeImage,
+						Image: &canonical.ImageInput{
+							URL:      "https://example.com/cat.png",
+							MIMEType: "image/png",
+						},
+					},
+				},
+			},
+		},
+		Stream: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(capture.Body()), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	messages, ok := payload["messages"].([]any)
+	if !ok {
+		t.Fatalf("messages = %#v, want array", payload["messages"])
+	}
+
+	var imageBlock map[string]any
+	for _, rawMessage := range messages {
+		message, ok := rawMessage.(map[string]any)
+		if !ok {
+			continue
+		}
+		content, ok := message["content"].([]any)
+		if !ok {
+			continue
+		}
+		for _, rawBlock := range content {
+			block, ok := rawBlock.(map[string]any)
+			if !ok {
+				continue
+			}
+			if block["type"] == "image_url" {
+				imageBlock = block
+				break
+			}
+		}
+		if imageBlock != nil {
+			break
+		}
+	}
+
+	if imageBlock == nil {
+		t.Fatalf("captured body missing image_url block: %s", capture.Body())
+	}
+	imageURL, ok := imageBlock["image_url"].(map[string]any)
+	if !ok {
+		t.Fatalf("image_url = %#v, want object", imageBlock["image_url"])
+	}
+	if imageURL["url"] != "https://example.com/cat.png" {
+		t.Fatalf("image_url.url = %#v, want %q", imageURL["url"], "https://example.com/cat.png")
+	}
+}
+
+func TestOpenAIAdapterEncodesResponsesVision(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "openai-test-key")
+
+	server, capture := newOpenAICaptureStubServer(t, "responses_stream")
+	adapter := openai.NewAdapter(server.Client())
+
+	_, err := adapter.Execute(context.Background(), config.ProviderConfig{
+		Provider:  "openai",
+		BaseURL:   server.URL,
+		APIKeyEnv: "OPENAI_API_KEY",
+	}, canonical.Request{
+		EndpointKind: canonical.EndpointKindResponses,
+		PublicModel:  "openai/gpt-4.1",
+		Conversation: []canonical.Turn{
+			{
+				Role: canonical.RoleUser,
+				Content: []canonical.ContentBlock{
+					{
+						Type: canonical.ContentTypeText,
+						Text: "describe this image",
+					},
+					{
+						Type: canonical.ContentTypeImage,
+						Image: &canonical.ImageInput{
+							URL:      "https://example.com/cat.png",
+							MIMEType: "image/png",
+						},
+					},
+				},
+			},
+		},
+		Stream: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(capture.Body()), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	input, ok := payload["input"].([]any)
+	if !ok {
+		t.Fatalf("input = %#v, want array", payload["input"])
+	}
+
+	var imageBlock map[string]any
+	for _, rawItem := range input {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		content, ok := item["content"].([]any)
+		if !ok {
+			continue
+		}
+		for _, rawBlock := range content {
+			block, ok := rawBlock.(map[string]any)
+			if !ok {
+				continue
+			}
+			if block["type"] == "input_image" {
+				imageBlock = block
+				break
+			}
+		}
+		if imageBlock != nil {
+			break
+		}
+	}
+
+	if imageBlock == nil {
+		t.Fatalf("captured body missing input_image block: %s", capture.Body())
+	}
+	imageURL, ok := imageBlock["image_url"].(string)
+	if !ok {
+		t.Fatalf("input_image.image_url = %#v, want string", imageBlock["image_url"])
+	}
+	if imageURL != "https://example.com/cat.png" {
+		t.Fatalf("input_image.image_url = %#v, want %q", imageURL, "https://example.com/cat.png")
 	}
 }
 

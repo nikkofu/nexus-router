@@ -17,7 +17,7 @@ func Responses(exec ExecuteService, policyReader PolicyReader) http.Handler {
 
 		req, err := openaiapi.DecodeResponsesRequest(r.Body)
 		if err != nil {
-			openaiapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			writeDecodeError(w, err)
 			return
 		}
 

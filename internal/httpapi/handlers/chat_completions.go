@@ -17,7 +17,7 @@ func ChatCompletions(exec ExecuteService, policyReader PolicyReader) http.Handle
 
 		req, err := openaiapi.DecodeChatCompletionRequest(r.Body)
 		if err != nil {
-			openaiapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			writeDecodeError(w, err)
 			return
 		}
 

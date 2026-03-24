@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/nikkofu/nexus-router/internal/auth"
 	"github.com/nikkofu/nexus-router/internal/canonical"
@@ -30,11 +31,22 @@ func writeJSON(w http.ResponseWriter, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
+func writeDecodeError(w http.ResponseWriter, err error) {
+	if strings.HasPrefix(err.Error(), "unsupported_capability:") {
+		openaiapi.WriteError(w, http.StatusBadRequest, "unsupported_capability", err.Error())
+		return
+	}
+
+	openaiapi.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+}
+
 func writeExecutionError(w http.ResponseWriter, err error) {
 	var execErr *providers.ExecutionError
 
 	switch {
 	case errors.Is(err, service.ErrUnsupportedCapability):
+		openaiapi.WriteError(w, http.StatusBadRequest, "unsupported_capability", err.Error())
+	case strings.HasPrefix(err.Error(), "unsupported_capability:"):
 		openaiapi.WriteError(w, http.StatusBadRequest, "unsupported_capability", err.Error())
 	case errors.As(err, &execErr):
 		openaiapi.WriteError(w, http.StatusBadGateway, "upstream_error", "upstream request failed")

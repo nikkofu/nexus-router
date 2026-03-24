@@ -858,6 +858,30 @@ func chatTextRequest(model string, stream bool) map[string]any {
 	}
 }
 
+func chatVisionRequest(model string, stream bool) map[string]any {
+	return map[string]any{
+		"model":  model,
+		"stream": stream,
+		"messages": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{
+						"type": "text",
+						"text": "describe this image",
+					},
+					{
+						"type": "image_url",
+						"image_url": map[string]any{
+							"url": "https://example.com/cat.png",
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 func responsesTextRequest(model string, stream bool) map[string]any {
 	return map[string]any{
 		"model":  model,
@@ -892,14 +916,18 @@ func chatToolsRequest() map[string]any {
 	return req
 }
 
-func responsesVisionRequest() map[string]any {
+func responsesVisionRequest(model string, stream bool) map[string]any {
 	return map[string]any{
-		"model":  "openai/gpt-4.1",
-		"stream": false,
+		"model":  model,
+		"stream": stream,
 		"input": []map[string]any{
 			{
 				"role": "user",
 				"content": []map[string]any{
+					{
+						"type": "input_text",
+						"text": "describe this image",
+					},
 					{
 						"type":      "input_image",
 						"image_url": "https://example.com/cat.png",

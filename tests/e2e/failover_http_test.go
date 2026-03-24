@@ -38,18 +38,18 @@ func TestChatHTTPDoesNotFailOverAfterOutputCommit(t *testing.T) {
 	}
 }
 
-func TestResponsesHTTPRejectsVisionOnPublicTextPath(t *testing.T) {
+func TestResponsesHTTPAllowsVisionOnPublicSurface(t *testing.T) {
 	env := startHTTPTestEnv(t, "openai_responses")
 	defer env.Close()
 
-	resp := postJSON(t, env.Client, env.BaseURL+"/v1/responses", env.Token, responsesVisionRequest())
-	assertStatus(t, resp, 400)
+	resp := postJSON(t, env.Client, env.BaseURL+"/v1/responses", env.Token, responsesVisionRequest("openai/gpt-4.1", false))
+	assertStatus(t, resp, 200)
 
 	body := readBody(t, resp)
-	assertJSONErrorType(t, body, "unsupported_capability")
+	assertBodyContains(t, body, "\"object\":\"response\"", "\"text\":\"hello\"")
 
-	if env.Primary.Hits() != 0 {
-		t.Fatalf("primary hits = %d, want 0", env.Primary.Hits())
+	if env.Primary.Hits() != 1 {
+		t.Fatalf("primary hits = %d, want 1", env.Primary.Hits())
 	}
 }
 

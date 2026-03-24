@@ -91,8 +91,12 @@ func normalizeChatContent(raw json.RawMessage, rawRole string, role canonical.Ro
 
 	blocks := make([]canonical.ContentBlock, 0, len(items))
 	for _, item := range items {
-		switch item["type"] {
+		itemType, _ := item["type"].(string)
+		switch itemType {
 		case "text":
+			if isImageLikeContentItem(item) {
+				return nil, invalidRequestError("messages.content text items must not include image fields")
+			}
 			blocks = append(blocks, canonical.ContentBlock{
 				Type: canonical.ContentTypeText,
 				Text: fmt.Sprint(item["text"]),
@@ -117,7 +121,7 @@ func normalizeChatContent(raw json.RawMessage, rawRole string, role canonical.Ro
 				},
 			})
 		default:
-			return nil, invalidRequestError("messages.content item type %q is not supported", fmt.Sprint(item["type"]))
+			return nil, invalidRequestError("messages.content item type %q is not supported", itemType)
 		}
 	}
 

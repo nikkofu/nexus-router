@@ -31,6 +31,9 @@ func DecodeResponsesRequest(r io.Reader) (canonical.Request, error) {
 		for _, content := range item.Content {
 			switch content.Type {
 			case "input_text":
+				if isImageLikeContentItem(content.Raw) {
+					return canonical.Request{}, invalidRequestError("input_text items must not include image fields")
+				}
 				blocks = append(blocks, canonical.ContentBlock{
 					Type: canonical.ContentTypeText,
 					Text: content.Text,

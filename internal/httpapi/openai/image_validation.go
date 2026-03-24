@@ -40,6 +40,22 @@ func validatePublicImageRole(rawRole string, role canonical.Role) error {
 	return nil
 }
 
+func isImageLikeContentItem(item map[string]any) bool {
+	if item == nil {
+		return false
+	}
+	if _, ok := item["image_url"]; ok {
+		return true
+	}
+	if _, ok := item["file_id"]; ok {
+		return true
+	}
+	if rawType, ok := item["type"].(string); ok && strings.Contains(strings.ToLower(rawType), "image") {
+		return true
+	}
+	return false
+}
+
 func validateAllowedObjectKeys(raw map[string]any, allowed ...string) error {
 	allowedSet := make(map[string]struct{}, len(allowed))
 	for _, key := range allowed {
